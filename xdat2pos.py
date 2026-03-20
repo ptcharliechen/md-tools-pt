@@ -1,13 +1,14 @@
+from kit.args import args
+arg = args({"output": "POSCARs", "incar": [None, str, "INCAR path"], "potcar": [None, str, "POTCAR path"], \
+            "kpoints": [None, str, "KPOINTS path"]}, "XDATCAR", output_isdir=True)
 from os import path, mkdir, getcwd
 from shutil import copy
 from copy import deepcopy
 from numpy import array
 from kit.vasp import XDATCAR, POSCAR
-from kit.interface import step, args
+from kit.interface import step
 
 if __name__ == "__main__":
-    arg = args({"output": "POSCARs", "incar": [None, str, "INCAR path"], "potcar": [None, str, "POTCAR path"], "kpoints": [None, str, "KPOINTS path"]}, "XDATCAR")
-    
     xdatcar = XDATCAR(arg)
     steps = step(xdatcar)
     xdatcar.cutoff_step = max(steps.get())
@@ -36,7 +37,7 @@ if __name__ == "__main__":
         poscar = POSCAR(arg)
         poscar_arg = deepcopy(arg.args)
         poscar_arg.output = path.join(getcwd(), arg.args.output, str(step), "POSCAR")
-        poscar.args, poscar.title, poscar.elements, poscar.atoms = poscar_arg, "POSCAR_{}".format(idx), xdatcar.elements, xdatcar.atoms
+        poscar.args, poscar.title, poscar.elements, poscar.atoms = poscar_arg, f"POSCAR_{idx}", xdatcar.elements, xdatcar.atoms
         poscar.lattice = (xdatcar.lattice[step-arg.arg.step] if array(xdatcar.lattice).ndim == 3 else xdatcar.lattice)
         poscar.fast_position = xdatcar.fast_position[idx]
         poscar.write_fast()
