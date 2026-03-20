@@ -1,4 +1,5 @@
 from numpy import arange
+from collections.abc import Iterable
 import matplotlib.pyplot as plt
 
 class Plot:
@@ -7,37 +8,40 @@ class Plot:
         self._label = None
         self._fig = plt.figure()
         self._host = self._fig.add_subplot(111)
-        self._labelFlag, self._xlabelFlag, self._ylabelFlag = False, False, False
-        self._xticksFlag, self._yticksFlag = False, False
-        plt.subplots_adjust(right=0.95, top=0.95)
+        self._label_flag, self._xlabel_flag, self._ylabel_flag = False, False, False
+        self._xticks_flag, self._yticks_flag = False, False
+        self._xlim_flag, self._ylim_flag = False, False
+        self._xmin, self._xmax = None, None
+        self._ymin, self._ymax = None, None
+        plt.subplots_adjust(right=0.95, top=0.95, bottom=0.118)
     @property
     def data(self):
         return self._data
     @property
     def line_label(self):
-        return self._labelFlag
+        return self._label_flag if not self._label_flag else self._label
     @line_label.setter
     def line_label(self, label):
         assert len(label) == len(self._data), "Label length does not match data length."
         self._label = label
-        self._labelFlag = True
+        self._label_flag = True
     @property
     def xlabel(self):
-        return self._xlabelFlag
+        return self._xlabel_flag
     @xlabel.setter
     def xlabel(self, xlabel):
-        self._host.set_xlabel(xlabel, {"fontsize": 14})
-        self._xlabelFlag = True
+        self._host.set_xlabel(xlabel, {"fontsize": 15})
+        self._xlabel_flag = True
     @property
     def ylabel(self):
-        return self._ylabelFlag
+        return self._ylabel_flag
     @ylabel.setter
     def ylabel(self, ylabel):
-        self._host.set_ylabel(ylabel, {"fontsize": 14})
-        self._ylabelFlag = True
+        self._host.set_ylabel(ylabel, {"fontsize": 15})
+        self._ylabel_flag = True
     @property
     def xticks(self):
-        return self._xticksFlag
+        return self._xticks_flag
     @xticks.setter
     def xticks(self, xticks):
         data = []
@@ -45,17 +49,17 @@ class Plot:
             data += self._data[iterator][0]
         rng = max(data) - min(data)
         plt.xticks(arange(min(data), max(data)+rng/100, rng/(len(xticks)-1)), xticks, fontsize=12)
-        self._xticksFlag = True
+        self._xticks_flag = True
     @property
     def yticks(self):
-        return self._yticksFlag
+        return self._yticks_flag
     @yticks.setter
     def yticks(self, yticks):
         data = []
         for iterator in range(len(self._data)):
             data += self._data[iterator][1]
         rng = max(data) - min(data)
-        self._yticksFlag = True
+        self._yticks_flag = True
         self._host.yticks(arange(min(data), max(data)+rng/100, rng/len(yticks)), yticks, fontsize=12)
     def auto_xticks(self):
         from numpy import arange, ceil
@@ -78,6 +82,38 @@ class Plot:
             xticks = list(arange(0, ceil(len(x_len)/1000000)))
         if xticks is not None:
             self.xticks(xticks)
+    @property
+    def xlim(self):
+        return self._xlim_flag
+    @xlim.setter
+    def xlim(self, xlim):
+        if not isinstance(xlim, Iterable):
+            self._xmax = xlim
+        elif xlim[0] is None and xlim[1] is not None:
+            self._xmax = xlim[1]
+        elif xlim[1] is None and xlim[0] is not None:
+            self._xmin = xlim[0]
+        elif xlim[0] is not None and xlim[1] is not None:
+            self._xmin, self._xmax = xlim
+        else:
+            raise ValueError("Invalid value for xlim.")
+        self._xlim_flag = True
+    @property
+    def ylim(self):
+        return self._ylim_flag
+    @ylim.setter
+    def ylim(self, ylim):
+        if not isinstance(ylim, Iterable):
+            self._ymax = ylim
+        elif ylim[0] is None and ylim[1] is not None:
+            self._ymax = ylim[1]
+        elif ylim[1] is None and ylim[0] is not None:
+            self._ymin = ylim[0]
+        elif ylim[0] is not None and ylim[1] is not None:
+            self._ymin, self._ymax = ylim
+        else:
+            raise ValueError("Invalid value for ylim.")
+        self._ylim_flag = True
     def append(self, x, y):
         self._data.append((x, y))
     def plot(self, legend=True, palette=None):
@@ -101,10 +137,10 @@ class Plot:
                 else:
                     self._host.plot(data[0], data[1], color=palette[idx], label=self._label[idx], linewidth=2.2)
             self._host.legend(loc="best", fontsize=fontsize)
-        if not self._xticksFlag:
-            self._host.tick_params(axis='x', labelsize=12)
-        if not self._yticksFlag:
-            self._host.tick_params(axis='y', labelsize=12)
+        if not self._xticks_flag:
+            self._host.tick_params(axis='x', labelsize=14)
+        if not self._yticks_flag:
+            self._host.tick_params(axis='y', labelsize=14)
         for idx, data in enumerate(self._data):
             self._host.plot(data[0], data[1], color=palette[idx], linewidth=2.2)
         tmp_x, tmp_y = [], []
@@ -112,8 +148,16 @@ class Plot:
             tmp_x += list(self._data[i][0])
             tmp_y += list(self._data[i][1])
         buffer = (max(tmp_y) - min(tmp_y)) * 0.05
-        self._host.set_xlim(min(tmp_x), max(tmp_x))
-        self._host.set_ylim(min(tmp_y)-buffer, max(tmp_y)+buffer)
+        if self._xmin is None:
+            self._xmin = min(tmp_x)
+        if self._xmax is None:
+            self._xmax = max(tmp_x)
+        if self._ymin is None:
+            self._ymin = min(tmp_y)-buffer
+        if self._ymax is None:
+            self._ymax = max(tmp_y)+buffer
+        self._host.set_xlim(self._xmin, self._xmax)
+        self._host.set_ylim(self._ymin, self._ymax)
     def save(self, name):
         from kit.fundamental import Args
         from os import getcwd
@@ -124,58 +168,86 @@ class Plot:
 
 class TwinPlot(Plot):
     def __init__(self):
-        Plot.__init__(self)
+        super().__init__()
         self._left_data, self._right_data = [], []
         self._fig = plt.figure()
         self._host = self._fig.add_subplot(111)
         self._twin = self._host.twinx()
-        plt.subplots_adjust(top=0.95)
+        self._left_ylim_flag, self._right_ylim_flag = False, False
+        self._left_ymin, self._left_ymax = None, None
+        self._right_ymin, self._right_ymax = None, None
+        plt.subplots_adjust(top=0.95, bottom=0.118)
     @property
     def data(self):
         return self._data
     @property
-    def xlabel(self):
-        return self._xlabelFlag
-    @xlabel.setter
-    def xlabel(self, xlabel):
-        self._xlabelFlag = True
-        self._host.set_xlabel(xlabel, {"fontsize": 14})
-    @property
     def left_ylabel(self):
-        return self._ylabelFlag % 2
+        return self._ylabel_flag % 2
     @left_ylabel.setter
     def left_ylabel(self, ylabel):
-        self._ylabelFlag += 2
-        self._host.set_ylabel(ylabel, {"fontsize": 14})
+        self._ylabel_flag += 2
+        self._host.set_ylabel(ylabel, {"fontsize": 15})
     @property
     def right_ylabel(self):
-        return self._ylabelFlag // 2
+        return self._ylabel_flag // 2
     @right_ylabel.setter
     def right_ylabel(self, ylabel):
-        self._ylabelFlag += 1
-        self._twin.set_ylabel(ylabel, {"fontsize": 14})
+        self._ylabel_flag += 1
+        self._twin.set_ylabel(ylabel, {"fontsize": 15})
     @property
     def left_yticks(self):
-        return self._yticksFlag % 2
+        return self._yticks_flag % 2
     @left_yticks.setter
     def left_yticks(self, yticks):
         data = []
         for iterator in range(len(self._left_data)):
             data += self._data[iterator][1]
         rng = max(data) - min(data)
-        self._yticksFlag += 2
+        self._yticks_flag += 2
         self._host.yticks(arange(min(data), max(data)+rng/100, rng/len(yticks)), yticks, fontsize=14)
     @property
     def right_yticks(self):
-        return self._yticksFlag // 2
+        return self._yticks_flag // 2
     @right_yticks.setter
     def right_yticks(self, yticks):
         data = []
         for iterator in range(len(self._right_data)):
             data += self._data[iterator][1]
         rng = max(data) - min(data)
-        self._yticksFlag += 1
+        self._yticks_flag += 1
         self._twin.yticks(arange(min(data), max(data)+rng/100, rng/len(yticks)), yticks, fontsize=14)
+    @property
+    def left_ylim(self):
+        return self._left_ylim_flag
+    @left_ylim.setter
+    def left_ylim(self, ylim):
+        if not isinstance(ylim, Iterable):
+            self._left_ymax = ylim
+        elif ylim[0] is None and ylim[1] is not None:
+            self._left_ymax = ylim[1]
+        elif ylim[1] is None and ylim[0] is not None:
+            self._left_ymin = ylim[0]
+        elif ylim[0] is not None and ylim[1] is not None:
+            self._left_ymin, self._left_ymax = ylim
+        else:
+            raise ValueError("Invalid value for ylim.")
+        self._left_ylim_flag = True
+    @property
+    def right_ylim(self):
+        return self._right_ylim_flag
+    @right_ylim.setter
+    def right_ylim(self, ylim):
+        if not isinstance(ylim, Iterable):
+            self._right_ymax = ylim
+        elif ylim[0] is None and ylim[1] is not None:
+            self._right_ymax = ylim[1]
+        elif ylim[1] is None and ylim[0] is not None:
+            self._right_ymin = ylim[0]
+        elif ylim[0] is not None and ylim[1] is not None:
+            self._right_ymin, self._right_ymax = ylim
+        else:
+            raise ValueError("Invalid value for ylim.")
+        self._right_ylim_flag = True
     def append(self, x, y, axis="left"):
         if axis == "left":
             self._left_data.append((x, y))
@@ -205,12 +277,12 @@ class TwinPlot(Plot):
             right_fontsize = 10
         else:
             right_fontsize = 8
-        if not self._xticksFlag:
-            self._host.tick_params(axis='x', labelsize=12)
-            self._twin.tick_params(axis='x', labelsize=12)
-        if not self._yticksFlag:
-            self._host.tick_params(axis='y', labelsize=12)
-            self._twin.tick_params(axis='y', labelsize=12)
+        if not self._xticks_flag:
+            self._host.tick_params(axis='x', labelsize=14)
+            self._twin.tick_params(axis='x', labelsize=14)
+        if not self._yticks_flag:
+            self._host.tick_params(axis='y', labelsize=14)
+            self._twin.tick_params(axis='y', labelsize=14)
         if legend:
             for idx, data in enumerate(self._left_data):
                 if len(self._label) == 0:
@@ -235,10 +307,22 @@ class TwinPlot(Plot):
             tmp_y_left += list(self._left_data[i][1])
             tmp_y_right += list(self._right_data[i][1])
         left_buffer, right_buffer = (max(tmp_y_left) - min(tmp_y_left)) * 0.05, (max(tmp_y_right) - min(tmp_y_right)) * 0.05
-        self._host.set_xlim(min(tmp_x), max(tmp_x))
-        self._twin.set_xlim(min(tmp_x), max(tmp_x))
-        self._host.set_ylim(min(tmp_y_left)-left_buffer, max(tmp_y_left)+left_buffer)
-        self._twin.set_ylim(min(tmp_y_right)-right_buffer, max(tmp_y_right)+right_buffer)
+        if self._xmin is None:
+            self._xmin = min(tmp_x)
+        if self._xmax is None:
+            self._xmax = max(tmp_x)
+        self._host.set_xlim(self._xmin, self._xmax)
+        self._twin.set_xlim(self._xmin, self._xmax)
+        if self._left_ymin is None:
+            self._left_ymin = min(tmp_y_left)-left_buffer
+        if self._left_ymax is None:
+            self._left_ymax = max(tmp_y_left)+left_buffer
+        if self._right_ymin is None:
+            self._right_ymin = min(tmp_y_right)-right_buffer
+        if self._right_ymax is None:
+            self._right_ymax = max(tmp_y_right)+right_buffer
+        self._host.set_ylim(self._left_ymin, self._left_ymax)
+        self._twin.set_ylim(self._right_ymin, self._right_ymax)
 
 def plot(fig, file_name, ticks=False, line_label=True, xlabel=True, ylabel=True, palette=None):
     if ticks:
@@ -267,22 +351,22 @@ def plot(fig, file_name, ticks=False, line_label=True, xlabel=True, ylabel=True,
             else:
                 print("Warning: Input error.")
     if not line_label:
-        nameFlag = False
+        name_flag = False
     if line_label and not fig.line_label:
         while(1):
             tmp = input("Name the lines (y/n) [n]: ")
             if tmp == '':
-                nameFlag = False
+                name_flag = False
                 break
             elif tmp.lower() == 'y':
-                nameFlag = True
+                name_flag = True
                 break
             elif tmp.lower() == 'n':
-                nameFlag = False
+                name_flag = False
                 break
             else:
                 print("Warning: Input error.")
-        if nameFlag:
+        if name_flag:
             label = []
             if isinstance(fig, Plot):
                 for i in range(len(fig.data)):
@@ -295,6 +379,8 @@ def plot(fig, file_name, ticks=False, line_label=True, xlabel=True, ylabel=True,
                     line = input(f"Right line {i+1}: ")
                     label.append(line)
             fig.line_label = label
+    elif fig.line_label:
+        name_flag = True
     if xlabel and not fig.xlabel:
         while(1):
             tmp = input("Name X axis (y/n) [n]: ")
@@ -362,5 +448,5 @@ def plot(fig, file_name, ticks=False, line_label=True, xlabel=True, ylabel=True,
                 break
             else:
                 print("Warning: Input error.")
-    fig.plot(palette=palette, legend=nameFlag)
+    fig.plot(palette=palette, legend=name_flag)
     fig.save(file_name)
