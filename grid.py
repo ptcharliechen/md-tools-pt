@@ -1,12 +1,13 @@
+from kit.args import args
+arg = args({"output": "grid"}, "XDATCAR", molecules=True)
 from re import compile
 import numpy as np
 from scipy.ndimage import zoom
-from kit.interface import args, step, line
+from kit.interface import step, line
 from kit.vasp import XDATCAR
 from kit.accelerate import shift_to_origin
 
 if __name__ == "__main__":
-    arg = args({"output": "grid", "molecules": [None, str, "specify a file with molecule information"]}, "XDATCAR")
     xdatcar = XDATCAR(arg)
     atom_list = line(xdatcar)
     step_list = step(xdatcar)
@@ -25,7 +26,8 @@ if __name__ == "__main__":
     while(1):
         tmp = input("projection direction [xy]: ")
         if tmp == "":
-            direction = [0, 1]
+            direction = [0, 1, 2]
+            projected_dir = 'z'
             break
         elif len(tmp) != 2:
             print("Warning: Input error.")
@@ -73,13 +75,14 @@ if __name__ == "__main__":
             break
         else:
             print("Warning: Input error.")
-    
+
     xdatcar.read_all(atoms=atom_list, steps=step_list)
-    positions_idx = np.floor(shift_to_origin(xdatcar.fractional_position) * mesh).astype(int)
+    positions = shift_to_origin(xdatcar.fractional_position)
+    positions_idx = np.floor(positions * mesh).astype(int)
     atom_density = np.zeros((mesh, mesh), dtype=float)
-    for positions_step_idx in positions_idx:
-        for position_idx in positions_step_idx:
-            if lower < position_idx[direction[2]] < upper:
+    for positions_step_idx, positions_step in zip(positions_idx, positions):
+        for position_idx, position in zip(positions_step_idx, positions_step):
+            if lower < position[direction[2]] < upper:
                 atom_density[position_idx[direction[0]], position_idx[direction[1]]] += 1
     atom_density /= positions_idx.shape[0]
     tiled_atom_density = np.tile(atom_density, (3, 3))
@@ -89,7 +92,7 @@ if __name__ == "__main__":
         if yn.lower() == 'y':
             tiled_atom_density = zoom(tiled_atom_density, zoom=10, order=3)
             tiled_atom_density[tiled_atom_density < 0] = 0
-            start, end = 10 * mesh, 20 * mesh + 1
+            start, end = 10 * mesh , 20 * mesh + 1
             break
         elif yn.lower() == 'n':
             start, end = mesh, 2 * mesh + 1
