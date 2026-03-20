@@ -1,10 +1,12 @@
+from kit.args import Args
+arg = Args({"output": "Selected_Charge_Diff", "molecules": ["molecules.csv", str, "specify a file with molecule information"], \
+            "poscar": [None, str, "POSCAR path to get element information"], "potcar": [None, str, "POTCAR path to get electron information"]})
 from os import path, getcwd, listdir
-from numpy import sum, zeros, linspace
+from numpy import zeros, linspace
 from scipy.interpolate import interp1d
 from kit.fundamental import Step
-from kit.vasp import ACF, ACFs, Charge_Edit, Args
+from kit.vasp import ACF, ACFs, Charge_Edit
 from kit.interface import lines, smooth
-from kit.etc import write_csv
 
 class Step_Charge(Step):
     def __init__(self, input_obj=None, put_flag=False):
@@ -46,10 +48,8 @@ def choose_mode(args):
             print("Warning: Input error.")
 
 if __name__ == "__main__":
-    arg = Args({"output": "Selected_Charge_Diff", "molecules": [None, str, "specify a file with molecule information"],
-                "poscar": [None, str, "POSCAR path to get element information"], "potcar": [None, str, "POTCAR path to get charge information"]})
     arg.same_name(getcwd(), arg.args.output)
-    
+
     if arg.args.input is None:
         arg = choose_mode(arg)
     elif path.isfile(arg.args.input) or path.isfile(path.join(arg.args.input, "ACF.dat")):
@@ -65,28 +65,10 @@ if __name__ == "__main__":
         if not flag:
             arg = choose_mode(arg)
     
-    if arg.args.molecules is None:
-        print("\nWarning: You do not specify a file with molecule information.")
-    elif not path.isfile(arg.args.molecules):
-        print(f"\nWarning: {arg.args.molecules} does not exist.")
-    if arg.args.molecules is None or not path.isfile(arg.args.molecules):
-        print("It is optional. You can choose whether to provide the molecule information or not.")
-        while(1):
-            tmp = input("\nDo you want to provide the molecule information? (y/n) [n]: ")
-            if tmp == "":
-                tmp = "n"
-            if tmp.lower() == 'y':
-                charge_edit = Charge_Edit(arg, steps=Step_Charge(arg))
-                charge_edit.read_molecules()
-                break
-            elif tmp.lower() == 'n':
-                charge_edit = Charge_Edit(arg, steps=Step_Charge(arg))
-                break
-            else:
-                print("Warning: Input error.")
-    else:
-        charge_edit = Charge_Edit(arg, steps=Step_Charge(arg))
-        
+    charge_edit = Charge_Edit(arg, steps=Step_Charge(arg))
+    if arg.args.molecules is not None:
+        charge_edit.read_molecules()
+    
     while(1):
         try:
             charge_edit.read_elements()
@@ -96,6 +78,7 @@ if __name__ == "__main__":
         else:
             break
         charge_edit.read_elements()
+    
     while(1):
         try:
             charge_edit.read_ref()
@@ -109,16 +92,11 @@ if __name__ == "__main__":
     if path.isfile(arg.args.input):
         atom_lists = lines(charge_edit)
         data = []
-        
         for atom_list in atom_lists:
             tmp = []
-            charge = ACF(arg)
-            charge.read_atom(path.join(path.dirname(arg.args.input), "ACF.dat"), atoms=atom_list)
-            tmp.append(f"{sum(charge.charge):.4f}")
-            tmp.append(charge.charge)
-            tmp.append(charge.atoms.get())
-            data.append(tmp)
-        write_csv(arg.args.output, data, list(range(len(data))), ["charge sum", "charge", "atoms"])
+            charge = ACF(charge_edit)
+            charge.read_all(atoms=atom_list)
+            charge.write_all()
     elif path.isdir(arg.args.input):
         if not path.isfile(path.join(arg.args.input, "Charge.csv")) or not path.isfile(path.join(arg.args.input, "Charge_Diff.csv")):
             charge_edit.build()
@@ -128,7 +106,7 @@ if __name__ == "__main__":
         charges = []
         for atom_list in atom_lists:
             charge = ACFs(charge_edit, steps=Step_Charge(charge_edit))
-            charge.read_atom(atoms=atom_list, diff_file="Charge_Diff")
+            charge.read_all(atoms=atom_list, diff_file="Charge_Diff")
             charge.write_all()
             charges.append(charge)
         
@@ -151,4 +129,3 @@ if __name__ == "__main__":
                     write_file.write(",{:.4f}".format(_))
                 write_file.write('\n')
     print("Done!")
-
