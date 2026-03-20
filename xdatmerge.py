@@ -1,6 +1,6 @@
 from os import path, getcwd
 from sys import argv
-from kit.fundamental import Args
+from kit.args import Args
 
 if __name__ == "__main__":
     Args.same_name(getcwd(), "XDATCAR")
@@ -14,7 +14,7 @@ if __name__ == "__main__":
             elif path.isfile(path.join(XDAT_path, "XDATCAR")):
                 XDAT_paths.append(path.join(XDAT_path, "XDATCAR"))
             else:
-                print("Warning: Argument {} doesn't exist.".format(idx))
+                print(f"Warning: Argument {idx} doesn't exist.")
     if len(argv) == 1: 
         print("Input paths of XDATCAR.\n")
         while(1):
