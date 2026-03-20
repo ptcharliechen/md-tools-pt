@@ -1,63 +1,8 @@
 from os import path
-from re import compile
+from re import fullmatch, split
 from collections.abc import Iterable
 from copy import deepcopy
-from numpy import inf
-from kit.fundamental import Step, Atom, Args
-
-def args(parameters: dict, inputType: str, outputFile=None) -> Args:
-    """
-    Check and set the input and output files for preprocessing.
-
-    input check:
-        The input file exists or not. If not, reset the path.
-    output check:
-        The output file exists or not. If so, revise the old file.
-
-    Parameters
-    ----------
-    parameters (mandatory): dict
-        A dictionary of the parameter options allowed by the designer.
-    inputType (mandatory): str
-        Filename extension or default input file name. Choose one.
-        'input_file_check' method helps you judge it.
-        Attention, default input file name has higher priority.
-        If not, filename extension is applied.
-        Default input file name:
-            If users just provide a directory, 'input_file_check' method implements it
-            with 'inputType'.
-        Filename extension:
-            If users give a file without filename extension, 'input_file_check' method
-            supplements it with 'inputType'.
-    outputFile (optional): str, default None
-        The default output file name. If None, the output file name will be the same as
-        the 'output' key in 'parameters' dictionary.
-
-    Returns
-    -------
-    args : Args
-        A dictionary of preprocessing options.
-    """
-    # Initialize Args with parameters
-    args = Args(parameters)
-    
-    # Check the 'input' key in 'parameters' dictionary is complete or not.
-    # If not, a valid file path should be reset to 'input' key in 'args' by users.
-    args.args.input = args.input_file_check(args.args.input, inputType)
-    
-    # Check the 'output' key in 'parameters' dictionary exists any same name file or directory.
-    # If so, the old file or directory name should be revised by users.
-    from os import getcwd
-    if outputFile is None:
-        methods = [attr for attr in dir(args.args) if "output" in attr]
-        for method in methods:
-            if getattr(args.args, method) is None:
-                continue
-            args.same_name(getcwd(), getattr(args.args, method))
-    else:
-        args.same_name(getcwd(), outputFile)
-    
-    return args
+from kit.fundamental import Step, Atom
 
 def flatten(item_list: list):
     """
@@ -103,7 +48,7 @@ def flatten(item_list: list):
     
     return item_object
 
-def step(software: object, items: int=-1, information: bool=True, step=Step(), annotate=0) -> Step:
+def step(software: object, items: int=-1, line: list=[], show_info_flag: bool=True, print_output_flag: bool=False, step=Step(), annotate=0) -> Step:
     """
     Prompt the user to input step numbers. All items will be combined into a 'Step' object.
 
@@ -121,7 +66,7 @@ def step(software: object, items: int=-1, information: bool=True, step=Step(), a
         software (mandatory): object, no default
             The software object with the necessary methods and attributes.
         
-        information (optional) : bool, default is True
+        show_info_flag (optional) : bool, default is True
             If True, print the information of start and step number.
         
         items (required): int, default is -1
@@ -145,13 +90,15 @@ def step(software: object, items: int=-1, information: bool=True, step=Step(), a
     step.bridge = software
     
     # Read step numbers from a file
-    step_list_from_file = file(software.args.stepfile, items)
+    step_list_from_file = file(software.args.stepfile, items, line)
     
     # Print the start step number
-    print(f"\nStart step number: {software.args.step}")
-    if step_list_from_file is None and information:
-        print("Input the numbers of steps.\n")
+    print("\nStep input:")
+    if step_list_from_file is None and show_info_flag:
+        print(f"\nStart step number: {software.args.step}")
+        print("\nInput the numbers of steps. Do NOT use any separators.\nAll steps will form a single record.\n")
 
+    output = []
     # Loop until the user input "end" or the specified number of steps is reached
     while(1):
         if items > 0 and i > items:
@@ -181,21 +128,22 @@ def step(software: object, items: int=-1, information: bool=True, step=Step(), a
                 print("Warning: 'end' is invalid when the line number is specified.")
                 continue
             else:
+                output.append(step)
                 break
         # Break the loop if a range of steps is input
         elif err_return == 2:
-            return "all"
+            output.append("all")
+            break
 
         # Increment the step counter
         i += 1
 
     # Return the step object
     if annotate:
-        return step, annotate_info
-    else:
-        return step
+        output.append(annotate_info)
+    return output[0] if len(output) == 1 else tuple(output)
 
-def step_lines(software: object, step=Step(), items: int=-1, information: bool=True, flatten_flag: bool=False, annotate: int=0) -> tuple:
+def step_lines(software: object, step: Step=Step(), items: int=-1, line: list=[], show_info_flag: bool=True, print_output_flag: bool=False, flatten_flag: bool=False, annotate: int=0) -> tuple:
     """
     Prompt the user to input step numbers. Every item will be a 'Step' object individually.
     
@@ -221,7 +169,7 @@ def step_lines(software: object, step=Step(), items: int=-1, information: bool=T
         items (required) : int, default is -1
             The number of steps to be input.
 
-        information (optional) : bool, default is True
+        show_info_flag (optional) : bool, default is True
             If True, print the information of start and step number.
 
         flatten_flag (optional) : bool, default is False
@@ -247,35 +195,39 @@ def step_lines(software: object, step=Step(), items: int=-1, information: bool=T
     
     # Initialize
     i = 1
+    step = deepcopy(step)
     all_flag = False
     step_list = []  # List of step numbers
     
     # Read step numbers from a file
-    step_list_from_file = file(software.args.stepfile, items)
+    step_list_from_file = file(software.args.stepfile, items, line)
     
     # Print the start step number
-    print(f"\nStart step number: {software.args.step}")
-    if step_list_from_file is None and information:
-        print("Input the numbers of steps.\n")
+    print("\nStep input:")
+    if step_list_from_file is None and show_info_flag:
+        print(f"\nStart step number: {software.args.step}")
+        print("\nInput the numbers of steps seperated by cammas.\nEach line forms a single record.\n")
     
     pre_steps = deepcopy(step)
     pre_steps.bridge = software
     
     # Prompt the user to input step numbers
-    annotate_info = []
+    output = []
+    if print_output_flag:
+        user_output_info = []
+    if annotate:
+        annotate_info = []
     while(1):
         if items > 0 and i > items:
             # Add steps without repetation to the flattened list if "flatten" is True
+            output.append(step_list)
             if flatten_flag:
-                if annotate:
-                    return (step_list, flatten(step_list), annotate_info) if not all_flag else (step_list, "all", annotate_info)
-                else:
-                    return (step_list, flatten(step_list)) if not all_flag else (step_list, "all")
-            else:
-                if annotate:
-                    return step_list, annotate_info
-                else:
-                    return step_list
+                output.append(flatten(step_list) if not all_flag else "all")
+            if print_output_flag:
+                output.append(user_output_info)
+            if annotate:
+                output.append(annotate_info)
+            return output[0] if len(output) == 1 else tuple(output)
         
         if step_list_from_file is None or step_list_from_file == []:
             inp = input("%d: " % (i))
@@ -292,38 +244,50 @@ def step_lines(software: object, step=Step(), items: int=-1, information: bool=T
             if items > -1:
                 print("Warning: 'end' is invalid when the number of the atom lines is specified.")
                 continue
-            elif flatten_flag:
-                if annotate:
-                    return step_list, flatten(step_list), annotate_info
-                else:
-                    return step_list, flatten(step_list)
             else:
+                output.append(step_list)
+                if flatten_flag:
+                    output.append(flatten(step_list) if not all_flag else "all")
+                if print_output_flag:
+                    output.append(user_output_info)
                 if annotate:
-                    return step_list, annotate_info
-                else:
-                    return step_list
+                    output.append(annotate_info)
+                return output[0] if len(output) == 1 else tuple(output)
         # Check if the input is "all"
         elif inp.split()[0].lower() == "all":
             _ = steps.put(inp)
             all_flag = True
             step_list.append(steps)
+            if print_output_flag:
+                user_output_info.append(inp)
+            if annotate:
+                annotate_info.append(inp.split()[-annotate:])
             i += 1
             continue
         # Check if the input is "same"
         elif inp.split()[0].lower() == "same":
             step_list.append(step_list[-1])
+            if print_output_flag:
+                user_output_info.append(user_output_info[-1])
+            if annotate:
+                annotate_info.append(annotate_info[-1])
             i += 1
             continue
-        elif ":" in inp.lower() and "," in inp.lower():
-            print("Warning: ':' and ',' can not be used at the same time.")
+        elif len(inp.split('_')) == 2 and inp.split('_')[0].lower() == "clear" and inp.split('_')[1].isdigit() and int(inp.split('_')[1]) < i:
+            remove_row = int(inp.split('_')[1])
+            step_list.pop(remove_row-1)
+            print(f"Line {remove_row} is removed.")
+            if annotate:
+                annotate_info.pop(remove_row-1)
+            i -= 1
             continue
-        
+
         if annotate:
-            inp, tmp = inp.split()[0], inp.split()[1:1+annotate]
-        sp = inp.split(',')
+            inp, tmp = inp.split()[:-annotate], inp.split()[-annotate:]
         
         # Check each step range input
-        for step_range in sp:
+        single_output_info = []
+        for step_range in inp.split(","):
             err_return = steps.put(step_range)
             if steps.err_list[err_return]:
                 if step_list_from_file is not None:
@@ -331,13 +295,17 @@ def step_lines(software: object, step=Step(), items: int=-1, information: bool=T
                 else:
                     print(steps.err_list[err_return])
                 break
+            elif print_output_flag:
+                single_output_info.append(step_range)
         else:
             i += 1
             step_list.append(steps)
+            if print_output_flag:
+                user_output_info.append(single_output_info)
             if annotate:
                 annotate_info.append(tmp)
 
-def single(software: object, atom_number: int=1, atom=Atom(), name: str="Atom", annotate: int=0) -> Atom:
+def single(software: object, atom_number: int=1, line: list=[], show_info_flag: bool=True, atom=Atom(), name: str="Atom", annotate: int=0) -> Atom:
     """
     Prompt user to input a single atom or a list of atoms.
     
@@ -347,6 +315,8 @@ def single(software: object, atom_number: int=1, atom=Atom(), name: str="Atom", 
             The software object with the necessary methods and attributes.
         atom_number (required): int, default is 1
             The number of atoms to expect as input.
+        show_info_flag (optional) : bool, default is True
+            If True, print the information of start and step number.
         name (required): str, default is "Atom"
             The name to be displayed when requesting user input.
     
@@ -354,16 +324,22 @@ def single(software: object, atom_number: int=1, atom=Atom(), name: str="Atom", 
     --------
         list: An 'Atom' object representing the input atoms.
     """
+    atom = deepcopy(atom)
+
     # Read the elements from the software object
     software.read_elements()
     
     # Read atom numbers from a file
-    atom_list_from_file = file(software.args.atomfile, 1)
+    atom_list_from_file = file(software.args.atomfile, 1, line)
     
-    # Display the start atom number if information is True
-    print(f"\nStart atom number: {software.args.atom}\n")
+    # Display the start atom number if show_info_flag is True
+    print("\nAtom input:")
+    if atom_list_from_file is None and show_info_flag:
+        print(f"\nStart atom number: {software.args.atom}")
+        print("Input a number.")
     
     # Prompt the user to input atom numbers until a valid input is given
+    output = []
     while(1):
         # Prompt the user to input a single atom or a list of atoms
         if atom_list_from_file is None or atom_list_from_file == []:
@@ -390,7 +366,7 @@ def single(software: object, atom_number: int=1, atom=Atom(), name: str="Atom", 
         # Loop over the individual atoms in the input
         for a in tmp.split()[:atom_number]:
             # Check if the input is an integer
-            if compile(r"^\-?\d+$").match(a) is None:
+            if fullmatch(r"\-?\d+", a) is None:
                 print("Warning: Input integer(s).")
                 break
             else:
@@ -399,17 +375,17 @@ def single(software: object, atom_number: int=1, atom=Atom(), name: str="Atom", 
                 if atoms.err_list[err_return]:
                     print(atoms.err_list[err_return])
         else:
+            output.append(atoms)
             if annotate:
                 if atom_number < len(tmp.split()) <= atom_number + annotate:
-                    return atoms, tmp.split()[atom_number:]
+                    output.append(tmp.split()[atom_number:])
                 elif len(tmp.split()) > atom_number + annotate:
-                    return atoms, tmp.split()[atom_number:atom_number+annotate]
+                    output.append(tmp.split()[atom_number:atom_number+annotate])
                 else:
-                    return atoms, []
-            else:
-                return atoms
+                    output.append([])
+            return output[0] if len(output) == 1 else tuple(output)
 
-def couple(software: object, block_number: int=2, items: int=-1, atom=Atom(), information: bool=True, Atom_split_flag: bool=False, flatten_flag: bool=False, annotate: int=0) -> list:
+def couple(software: object, block_number: int=2, line: list=[], items: int=-1, atom=Atom(), show_info_flag: bool=True, Atom_split_flag: bool=False, flatten_flag: bool=False, annotate: int=0) -> list:
     """
     Prompt user to input a list of atoms.
     
@@ -423,7 +399,7 @@ def couple(software: object, block_number: int=2, items: int=-1, atom=Atom(), in
             The number of atoms to expect as input per step.
         items (required): int, default is -1
             The number of steps to expect as input. If -1, the input will continue until "end" is input.
-        information (optional): bool, default is True
+        show_info_flag (optional): bool, default is True
             Whether to display information about the start atom number.
     
     Returns:
@@ -435,6 +411,7 @@ def couple(software: object, block_number: int=2, items: int=-1, atom=Atom(), in
     
     # Initialize counter
     i = 1
+    atom = deepcopy(atom)
     
     # Read the elements from the software object
     software.read_elements()
@@ -443,11 +420,12 @@ def couple(software: object, block_number: int=2, items: int=-1, atom=Atom(), in
     atom_list = []
     
     # Read atom numbers from a file
-    atom_list_from_file = file(software.args.atomfile, items)
+    atom_list_from_file = file(software.args.atomfile, items, line)
     
     # Display the start atom number if information is True
-    print(f"\nStart atom number: {software.args.atom}")
-    if atom_list_from_file is None and information:
+    print("\nAtom input:")
+    if atom_list_from_file is None and show_info_flag:
+        print(f"\nStart atom number: {software.args.atom}")
         print(f"Input {block_number} numbers of atoms separated by {block_number-1} space(s).\n")
     
     if annotate:
@@ -455,19 +433,18 @@ def couple(software: object, block_number: int=2, items: int=-1, atom=Atom(), in
 
     # Prompt the user to input atom numbers
     # Loop until the user input "end" or the specified number of steps is reached
+    output = []
     while(1):
         # Check if the number of steps is reached
         if items > 0 and i > items:
+            output.append(atom_list)
             if flatten_flag:
-                if annotate:
-                    return atom_list, flatten(atom_list), annotate_info
-                else:
-                    return atom_list, flatten(atom_list)
-            else:
-                if annotate:
-                    return atom_list, annotate_info
-                else:
-                    return atom_list
+                atom_list_flatten = flatten(atom_list)
+                atom_list_flatten.elements = [software.elements[atom] for atom in atom_list_flatten.get()]
+                output.append(flatten(atom_list))
+            if annotate:
+                output.append(annotate_info)
+            return output[0] if len(output) == 1 else tuple(output)
         
         # Prompt the user to input a list of atoms
         if atom_list_from_file is None or atom_list_from_file == []:
@@ -482,16 +459,14 @@ def couple(software: object, block_number: int=2, items: int=-1, atom=Atom(), in
                 print("Warning: 'end' is invalid when the number of the step lines is specified.")
                 continue
             else:
+                output.append(atom_list)
                 if flatten_flag:
-                    if not annotate:
-                        return atom_list, flatten(atom_list)
-                    else:
-                        return atom_list, flatten(atom_list), annotate_info
-                else:
-                    if not annotate:
-                        return atom_list
-                    else:
-                        return atom_list, annotate_info
+                    atom_list_flatten = flatten(atom_list)
+                    atom_list_flatten.elements = [software.elements[atom] for atom in atom_list_flatten.get()]
+                    output.append(flatten(atom_list))
+                if annotate:
+                    output.append(annotate_info)
+                return output[0] if len(output) == 1 else tuple(output)
         
         # Check if the number of atoms per step is correct
         if len(inp.split('_')) == 2 and inp.split('_')[0].lower() == "clear" and inp.split('_')[1].isdigit() and int(inp.split('_')[1]) < i:
@@ -512,7 +487,7 @@ def couple(software: object, block_number: int=2, items: int=-1, atom=Atom(), in
         # Loop over the individual atoms in the input
         for a in inp.split()[:block_number]:
             # Check if the input is an integer
-            if compile(r"^\-?\d+$").match(a) is None:
+            if fullmatch(r"\-?\d+", a) is None:
                 print(f"Warning: Input {block_number} integers.")
                 break
             if Atom_split_flag:
@@ -543,7 +518,7 @@ def couple(software: object, block_number: int=2, items: int=-1, atom=Atom(), in
         if annotate:
             annotate_info.append(inp.split()[block_number:block_number+annotate])
 
-def blocks(software: object, block_number: int=2, items: int=-1, atom=Atom(), information: bool=True, flatten_flag: bool=False, annotate: int=0):
+def blocks(software: object, block_number: int=2, items: int=-1, atom=Atom(), atomfile_path: str=None, line: list=[], show_info_flag: bool=True, print_output_flag: bool=False, flatten_flag: bool=False, annotate: int=0):
     """
     Prompt user to input lists of blocks.
     
@@ -562,7 +537,7 @@ def blocks(software: object, block_number: int=2, items: int=-1, atom=Atom(), in
         items (required): int, default is -1
             The number of steps to expect as input. If -1, the input will continue until "end" is input.
         
-        information (optional): bool, default is True
+        show_info_flag (optional): bool, default is True
             Whether to display information about the start atom number.
         
         flatten_flag (optional): bool, default is False
@@ -577,25 +552,35 @@ def blocks(software: object, block_number: int=2, items: int=-1, atom=Atom(), in
     Examples:
     ---------
     """
-    
     # Initialize counter
     i = 1
+    atom = deepcopy(atom)
     
     # Read the elements from the software object
     software.read_elements()
     atom_list = []
     
     # Read atom numbers from a file
-    atom_list_from_file = file(software.args.atomfile, items)
+    if atomfile_path is not None and not path.isfile(atomfile_path):
+        print(f"Warning: {atomfile_path} does not exist.")
+        atomfile_path = None
+    if atomfile_path is None:
+        atomfile_path = software.args.atomfile
+    atom_list_from_file = file(atomfile_path, items, line)
     
     # Display the start atom number if information is True
-    print(f"\nStart atom number: {software.args.atom}")
-    if atom_list_from_file is None and information:
-        print(f"Input {block_number} blocks separated by {block_number-1} space(s).\nInput numbers or elements separated by cammas in a region.\n")
+    print("\nAtom input:")
+    if atom_list_from_file is None and show_info_flag:
+        print(f"\nStart atom number: {software.args.atom}")
+        print(f"Input {block_number} blocks separated by {block_number-1} space(s).\nInput numbers or elements separated by cammas in a block.\nEach line forms a single record.\n")
     
+    # Check if the annotate parameter is valid
     if annotate:
         annotate_info = []
+    if print_output_flag:
+        user_output_info = []
     # Prompt the user to input blocks until the specified number of steps is reached or "end" is input
+    output = []
     while(1):
         if items > 0 and i > items:
             break
@@ -611,28 +596,36 @@ def blocks(software: object, block_number: int=2, items: int=-1, atom=Atom(), in
                 print("Warning: 'end' is invalid when the number of the step lines is specified.")
                 continue
             else:
-                if flatten_flag:
-                    if annotate:
-                        return atom_list, flatten(atom_list), annotate_info
-                    else:
-                        return atom_list, flatten(atom_list)
-                else:
-                    if annotate:
-                        return atom_list, annotate_info
-                    else:
-                        return atom_list
+                break
+        elif inp.lower() == "same":
+            atom_list.append(atom_list[-1])
+            if print_output_flag:
+                user_output_info.append(user_output_info[-1])
+            if annotate:
+                annotate_info.append(annotate_info[-1])
+            i += 1
+            continue
         
         if len(inp.split('_')) == 2 and inp.split('_')[0].lower() == "clear" and inp.split('_')[1].isdigit() and int(inp.split('_')[1]) < i:
-            blocks.pop(int(inp.split('_')[1])-1)
-            print("Block %d is removed." % (int(inp.split('_')[1])))
+            remove_row = int(inp.split('_')[1])
+            atom_list.pop(remove_row-1)
+            print("Line %d is removed." % (remove_row))
+            if annotate:
+                annotate_info.pop(remove_row-1)
+            i -= 1
             continue
         elif len(inp.split()) < block_number or len(inp.split()) > block_number + annotate:
             print(f"Warning: {block_number} blocks seperated by space(s).")
             continue
         
         blocks, recorded = [], []
+        if print_output_flag:
+            single_output_info = []
         # Loop over the individual blocks in the input
         for block in inp.split()[:block_number]:
+            # Skip the "skip" block
+            if "skip" in block.lower():
+                continue
 
             # Create an Atom object and bridge from the software object
             atoms = deepcopy(atom)
@@ -640,17 +633,16 @@ def blocks(software: object, block_number: int=2, items: int=-1, atom=Atom(), in
             
             # Loop over the individual atoms in each block
             flag = False
-            for a in block.split(','):
+            for block_split in block.split(','):
                 # Get the return to check whether there is any error
-                if "rem" in a.lower():
+                if "rem" in block_split.lower():
                     for _ in range(len(atoms.elements)):
                         if _ not in recorded:
                             err_return = atoms.put(_)
-                
                 else:
-                    err_return = atoms.put(a)
+                    err_return = atoms.put(block_split)
                 recorded.extend(atoms.get())
-
+                
                 # Check whether there is any error
                 if atoms.err_list[err_return]:
                     print(atoms.err_list[err_return])
@@ -659,17 +651,33 @@ def blocks(software: object, block_number: int=2, items: int=-1, atom=Atom(), in
             else:
                 atoms.sort()
                 blocks.append(atoms)
-                
+                if print_output_flag:
+                    single_output_info.append(block)
+            
             if flag:
                 break
         else:
             if not atoms.err_list[err_return]:
                 atom_list.append(tuple(blocks))
                 i += 1
+                if print_output_flag:
+                    user_output_info.append(single_output_info)
                 if annotate:
                     annotate_info.append(inp.split()[block_number:block_number+annotate])
+        
+    # Output
+    output.append(atom_list)
+    if flatten_flag:
+        atom_list_flatten = flatten(atom_list)
+        atom_list_flatten.elements = [software.elements[atom] for atom in atom_list_flatten.get()]
+        output.append(atom_list_flatten)
+    if print_output_flag:
+        output.append(user_output_info)
+    if annotate:
+        output.append(annotate_info)
+    return output[0] if len(output) == 1 else tuple(output)
 
-def line(software: object, items: int=-1, atom=Atom(), information: bool=True, annotate: int=0) -> Atom:
+def line(software: object, items: int=-1, atom=Atom(), atomfile_path: str=None, line: list=[], show_info_flag: bool=True, print_output_flag: bool=False, annotate: int=0) -> Atom:
     """
     Prompt user to input a list of atoms. Return an 'Atom' object with inputted atom(s).
     
@@ -679,7 +687,7 @@ def line(software: object, items: int=-1, atom=Atom(), information: bool=True, a
             The software object with the necessary methods and attributes.
         items (required): int, default is -1
             The number of steps to expect as input. If -1, the input will continue until "end" is input.
-        information (optional): bool, default is True
+        show_info_flag (optional): bool, default is True
             Whether to display information about the start atom number.
         
     Returns:
@@ -689,22 +697,32 @@ def line(software: object, items: int=-1, atom=Atom(), information: bool=True, a
     
     # Initialize counter
     i = 1
+    atom = deepcopy(atom)
     
     # Create an Atom object and bridge from the software object
-    atoms = atom
+    atoms = deepcopy(atom)
     software.read_elements()
     atoms.bridge = software
     
     # Read atom numbers from a file
-    atom_list_from_file = file(software.args.atomfile, items)
+    if atomfile_path is not None and not path.isfile(atomfile_path):
+        print(f"Warning: {atomfile_path} does not exist.")
+        atomfile_path = None
+    if atomfile_path is None:
+        atomfile_path = software.args.atomfile
+    atom_list_from_file = file(atomfile_path, items, line)
     
     # Display the start atom number if information is True
-    print(f"\nStart atom number: {software.args.atom}")
-    if atom_list_from_file is None and information:
-        print("Input the numbers of atoms.\n")
+    print("\nAtom input:")
+    if atom_list_from_file is None and show_info_flag:
+        print(f"\nStart atom number: {software.args.atom}")
+        print("Input the numbers of atoms. Do NOT use any separators.\nAll atoms will form a single record.\n")
     
     # Prompt the user to input atom numbers until the specified number of steps is reached or "end" is input
+    if print_output_flag:
+        user_output_info = []
     annotate_info = []
+    output = []
     while(1):
         if items > 0 and i > items:
             break
@@ -720,8 +738,7 @@ def line(software: object, items: int=-1, atom=Atom(), information: bool=True, a
                 print("Warning: 'end' is invalid when the number of the step lines is specified.")
                 continue
             else:
-                atoms.sort()
-                return atoms
+                break
         
         if annotate:
             inp, tmp = inp.split()[0], inp.split()[1:1+annotate]
@@ -732,17 +749,30 @@ def line(software: object, items: int=-1, atom=Atom(), information: bool=True, a
         if atoms.err_list[err_return]:
             print(atoms.err_list[err_return])
         elif err_return == 2:
+            output.append(atoms)
+            if print_output_flag:
+                user_output_info.append(inp)
+                output.append(user_output_info)
             if annotate:
                 annotate_info.append(tmp)
-                return atoms, annotate_info
-            else:
-                return atoms
+                output.append(annotate_info)
+            return output[0] if len(output) == 1 else tuple(output)
         else:
             i += 1
+            if print_output_flag:
+                user_output_info.append(inp)
             if annotate:
                 annotate_info.append(tmp)
+    
+    atoms.sort()
+    output.append(atoms)
+    if print_output_flag:
+        output.append(user_output_info)
+    if annotate:
+        output.append(annotate_info)
+    return output[0] if len(output) == 1 else tuple(output)
 
-def lines(software, information: bool=True, items: int=-1, atom=Atom(), flatten_flag: bool=False, annotate: int=0):
+def lines(software, show_info_flag: bool=True, items: int=-1, atom=Atom(), atomfile_path: str=None, line: list=[], print_output_flag: bool=False, flatten_flag: bool=False, annotate: int=0):
     """
     Prompt the user to input a list of atom numbers. Return a list of 'Atom' objects. Every object includes an item.
 
@@ -752,7 +782,7 @@ def lines(software, information: bool=True, items: int=-1, atom=Atom(), flatten_
         An object that has the attribute "preprocess" which is a dictionary.
     items (required): int, default is -1
         The number of steps to be input.
-    information (optional): bool, default is True
+    show_info_flag (optional): bool, default is True
         If True, print the information of start atom number.
     flatten_flag (optional): bool, default is False
         If True, return a flatten list of all atoms.
@@ -766,31 +796,36 @@ def lines(software, information: bool=True, items: int=-1, atom=Atom(), flatten_
     """
     
     # Initialize counter
-    i = 1  
+    i = 1
+    atom = deepcopy(atom)
     all_flag = False
     
     atom_list = []
 
     # Read atom numbers from a file
-    atom_list_from_file = file(software.args.atomfile, items)
+    if atomfile_path is not None and not path.isfile(atomfile_path):
+        print(f"Warning: {atomfile_path} does not exist.")
+        atomfile_path = None
+    if atomfile_path is None:
+        atomfile_path = software.args.atomfile
+    atom_list_from_file = file(atomfile_path, items, line)
     
     # Print the start atom number if information is True
-    print(f"\nStart atom number: {software.args.atom}")
-    if atom_list_from_file is None and information:
-        print("Input the numbers of atoms.\n")
+    print("\nAtom input:")
+    
+    if atom_list_from_file is None and show_info_flag:
+        print(f"\nStart atom number: {software.args.atom}")
+        print("Input the numbers of atoms seperated by cammas.\nEach line forms a single record.\n")
 
     # Prompt the user to input atom numbers until the specified number of steps is reached or "end" is input
-    annotate_info = []
+    if print_output_flag:
+        user_output_info = []
+    if annotate:
+        annotate_info = []
+    output = []
     while(1):
         if items > 0 and i > items:
-            # Add atoms without repetation to the flattened list if "flatten" is True
-            if flatten_flag:
-                if all_flag:
-                    return (atom_list, "all", annotate_info) if annotate else (atom_list, "all")
-                else:
-                    return (atom_list, flatten(atom_list), annotate_info) if annotate else (atom_list, flatten(atom_list))
-            else:
-                return atom_list, annotate_info if annotate else atom_list
+            break
         
         if atom_list_from_file is None or atom_list_from_file == []:
             inp = input("%d: " % (i))
@@ -803,13 +838,15 @@ def lines(software, information: bool=True, items: int=-1, atom=Atom(), flatten_
                 print("Warning: 'end' is invalid when the number of the step lines is specified.")
                 continue
             else:
-                if flatten_flag:
-                    if all_flag:
-                        return (atom_list, "all", annotate_info) if annotate else (atom_list, "all")
-                    else:
-                        return (atom_list, flatten(atom_list), annotate_info) if annotate else (atom_list, flatten(atom_list))
-                else:
-                    return (atom_list, annotate_info) if annotate else atom_list
+                break
+        elif inp.lower() == "same":
+            atom_list.append(atom_list[-1])
+            if print_output_flag:
+                user_output_info.append(user_output_info[-1])
+            if annotate:
+                annotate_info.append(annotate_info[-1])
+            i += 1
+            continue
 
         elif inp == "":
             print("Warning: Input error.")
@@ -823,14 +860,22 @@ def lines(software, information: bool=True, items: int=-1, atom=Atom(), flatten_
         if inp.lower() == "all":
             all_flag = True
             err_return = atoms.put(inp)
+            if print_output_flag:
+                user_output_info.append(inp.lower())
         elif inp.lower() == "same":
             err_return = atoms.put(atom_list[-1])
+            if print_output_flag:
+                user_output_info.append(user_output_info[-1])
         elif len(inp.split('_')) == 2 and inp.split('_')[0].lower() == "clear" and inp.split('_')[1].isdigit() and int(inp.split('_')[1]) < i:
             atom_list.pop(int(inp.split('_')[1])-1)
+            if print_output_flag:
+                user_output_info.pop(int(inp.split('_')[1])-1)
             print("Line %d is removed." % (int(inp.split('_')[1])))
+            i -= 1
             continue
         else:
             sp = inp.split(',')
+            single_output_info = []
             for a in sp:
                 err_return = atoms.put(a)
                 if atoms.err_list[err_return]:
@@ -839,14 +884,33 @@ def lines(software, information: bool=True, items: int=-1, atom=Atom(), flatten_
                     else:
                         print(atoms.err_list[err_return])
                     break
+                elif print_output_flag:
+                    single_output_info.append(a)
+            else:
+                atoms.sort()
+                atom_list.append(atoms)
+                if print_output_flag:
+                    user_output_info.append(single_output_info)
+                if annotate:
+                    annotate_info.append(tmp)
+                i += 1
+    
+    output.append(atom_list)
+    # Add atoms without repetation to the flattened list if "flatten" is True
+    if flatten_flag:
+        if all_flag:
+            output.append("all")
+        else:
+            atom_list_flatten = flatten(atom_list)
+            atom_list_flatten.elements = [software.elements[atom] for atom in atom_list_flatten.get()]
+            output.append(atom_list_flatten)
+    if print_output_flag:
+        output.append(user_output_info)
+    if annotate:
+        output.append(annotate_info)                
+    return output[0] if len(output) == 1 else tuple(output)
 
-        if not atoms.err_list[err_return]:
-            atoms.sort()
-            atom_list.append(atoms)
-            annotate_info.append(tmp)
-            i += 1
-
-def file(filename, items=-1):
+def file(filename, items=-1, line_numbers: list=[]):
     if filename is not None:
         if path.isfile(filename):
             lines = []
@@ -854,6 +918,9 @@ def file(filename, items=-1):
                 idx = 1
                 for line in read_file:
                     if line == '\n':
+                        continue
+                    elif len(line_numbers) > 0 and idx not in line_numbers:
+                        idx += 1
                         continue
                     idx += 1
                     lines.append(line.replace('\n', ''))
@@ -882,7 +949,7 @@ def wrap(software, type="d"):
         raise NameError("'type' parameter should be 'd', 'a', or 'dh'.")
     wrap.bridge = software
     wrap.center_position = wrap.fractional_position[:, 0, :]
-    wrap.measure_position = wrap.fractional_position[:, 1, :]
+    wrap.measure_position = wrap.fractional_position[:, 1:, :]
     
     while(1):
         yn = input("\nDoes measured atom wrap at step 0? (y/n) [y]: ")
@@ -910,8 +977,7 @@ def wrap(software, type="d"):
                 else:
                     print("Warning: Input 'a', 'ra', or 's'.\n")
         elif yn.lower() == 'n':
-            wrap.center_position = wrap.wrap(wrap.center_position)
-            wrap.measure_position = wrap.wrap(wrap.measure_position)
+            wrap.manual()
         else:
             print("Warning: Input 'y' or 'n'.\n")
             continue
@@ -925,35 +991,41 @@ def wrap(software, type="d"):
 def angle_manual(wrap):
     while(1):
         side_wrap = input("Modified side atom(s) (Over one atom allowed) (1/2): ")
-        if (side_wrap != "1") ^ (side_wrap != "2") ^ (side_wrap != "1 2"):
+        if fullmatch(r"(1|2|1.2)", side_wrap):
             print("Warning: Input error.")
             continue
-        if "1" in side_wrap.split():
+        if "1" in split(r"[^a-zA-Z0-9]", side_wrap):
             return manual_direction(1, wrap, 'a')
-        if "2" in side_wrap.split():
+        if "2" in split(r"[^a-zA-Z0-9]", side_wrap):
             return manual_direction(2, wrap, 'a')
 
 def dihedral_angle_manual(wrap):
     while(1):
         side_wrap = input("Modified side atom(s) (Over one atom allowed) (1/2/3): ")
-        for num in side_wrap.split():
+        for num in split(r"[^a-zA-Z0-9]", side_wrap):
             if (num != "1") ^ (num != "2") ^ (num != "3"):
                 print("Warning: Input error.")
                 break
-        if "1" in side_wrap.split():
-            return manual_direction(1, wrap, 'a')
-        if "2" in side_wrap.split():
-            return manual_direction(2, wrap, 'a')
-        if "3" in side_wrap.split():
-            return manual_direction(3, wrap, 'a')
+        else:
+            if "1" in side_wrap.split():
+                return manual_direction(1, wrap, 'a')
+            if "2" in side_wrap.split():
+                return manual_direction(2, wrap, 'a')
+            if "3" in side_wrap.split():
+                return manual_direction(3, wrap, 'a')
 
 def manual_direction(No, software, kind):
-    if kind == 'd':
-        directions = input("Modified direction(s) (Over one direction allowed): ")
-    else:
-        directions = input(f"Modified direction(s) for m{No} (Over one direction allowed): ")
-    for direction in directions.split():
-        if 'a' in direction.lower():
+    while(1):
+        if kind == 'd':
+            directions = input("Modified direction(s) (Over one direction allowed): ")
+        else:
+            directions = input(f"Modified direction(s) for m{No} (Over one direction allowed): ")
+        if fullmatch(r"[ABCabc]([^a-zA-Z0-9][ABCabc]){0,2}", directions):
+            break
+        else:
+            print("Warning: Input 'a', 'b', or 'c'.")
+    for direction in split(r"[^a-zA-Z0-9]", directions):
+        if 'a' == direction.lower():
             while(1):
                 PNDirection = input("+/- A direction (+/-): ")
                 if PNDirection == '+':
@@ -964,7 +1036,7 @@ def manual_direction(No, software, kind):
                     break
                 else:
                     print("Warning: Input error.")
-        if 'b' in direction.lower():
+        elif 'b' == direction.lower():
             while(1):
                 PNDirection = input("+/- B direction (+/-): ")
                 if PNDirection == '+':
@@ -975,7 +1047,7 @@ def manual_direction(No, software, kind):
                     break
                 else:
                     print("Warning: Input error.")
-        if 'c' in direction.lower():
+        elif 'c' == direction.lower():
             while(1):
                 PNDirection = input("+/- C direction (+/-): ")
                 if PNDirection == '+':
@@ -986,39 +1058,47 @@ def manual_direction(No, software, kind):
                     break
                 else:
                     print("Warning: Input error.")
+        else:
+            print(f"Warning: {direction} is an unavailable argument.")
     return software
 
-def threshold():
-    while(1):
-        yn = input("\nRevise the bond thresholds [n]: ")
-        if yn == "":
-            return None
-        elif yn.lower() == 'y':
-            break
-        elif yn.lower() == 'n':
-            return None
-    if yn == 'y':
-        i = 1
-        bond_type = {}
+def read_bond(software):
+    if hasattr(software.args, "bond") and software.args.bond is not None and path.isfile(software.args.bond):
+        software.molecules.read_bond(software.args.bond)
+    else:
         while(1):
-            tmp = input(f"{i}: ")
-            if tmp.lower() == "end":
+            yn = input("\nRevise the bond thresholds [n]: ")
+            if yn == "":
+                return False
+            elif yn.lower() == 'y':
                 break
-            sp = tmp.split()
-            if len(sp) != 2:
-                print("Warning: Input a bond type and the threshold separated by a space.")
-                continue
-            elif len(sp[0].split('-')) != 2:
-                print("Warning: The format of bond type is two elements separated by '-', like 'C-C', 'C-O'.")
-                continue
-            elif compile(r"^\d+\.?\d*$").match(sp[1]) is None:
-                print("Warning: The format of the threshold is a positive number.")
-                continue
-            i += 1
-            bond_type[sp[0]] = float(sp[1])
-            tmp = sp[0].split('-')
-            bond_type[f"{tmp[1]}-{tmp[0]}"] = float(sp[1])
-    return bond_type
+            elif yn.lower() == 'n':
+                return False
+            else:
+                print("Warning: Input 'y' or 'n'.\n")
+        if yn == 'y':
+            i = 1
+            bond_type = {}
+            while(1):
+                tmp = input(f"{i}: ")
+                if tmp.lower() == "end":
+                    break
+                sp = tmp.split()
+                if len(sp) != 2:
+                    print("Warning: Input a bond type and the threshold separated by a space.")
+                    continue
+                elif len(sp[0].split('-')) != 2:
+                    print("Warning: The format of bond type is two elements separated by '-', like 'C-C', 'C-O'.")
+                    continue
+                elif fullmatch(r"\d+\.?\d*", sp[1]) is None:
+                    print("Warning: The format of the threshold is a positive number.")
+                    continue
+                i += 1
+                bond_type[sp[0]] = float(sp[1])
+                tmp = sp[0].split('-')
+                bond_type[f"{tmp[1]}-{tmp[0]}"] = float(sp[1])
+        software.atom_step.molecules.threshold = bond_type
+        return True
 
 def smooth(lines):
     from kit.function import Smooth
@@ -1031,7 +1111,10 @@ def smooth(lines):
                 tmp = input("Set the smooth factor: ")
                 smooth.factor = tmp
                 if smooth.factor != -1:
-                    return array(smooth.smooth(lines, tmp)), smooth.factor
+                    smooth.curve = lines
+                    smooth.smooth()
+                    curve = array(smooth.curve)
+                    return curve, smooth.factor
         elif yn.lower() == 'n':
             return lines, 0
         else:
