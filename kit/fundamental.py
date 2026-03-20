@@ -2,16 +2,19 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from os import path
 from copy import deepcopy
-from argparse import ArgumentParser, Namespace
+from argparse import Namespace
 from collections import defaultdict
-from re import compile, split
+from re import fullmatch, split
 from numpy import ndarray, array
 import numpy as np
+from kit.args import Args
 
 class Fundamental(ABC):
-    def __init__(self, input_obj=None):
+    def __init__(self, input_obj=None, steps=None, atoms=None, **kwargs):
+        super().__init__(**kwargs)
         self._title = "title"
-        self._AtomStep = None
+        self._AtomStep = self._create_atom_step(input_obj, steps, atoms, **kwargs)
+        self._elements = []
         if hasattr(input_obj, "bridge"):
             self.bridge = input_obj
         else:
@@ -30,13 +33,16 @@ class Fundamental(ABC):
         pass
     @property
     def elements(self):
-        return self._AtomStep.atoms.elements
+        return self._elements
     @property
     def atoms_info(self):
         return self._AtomStep.atoms.atoms_info
     @property
     def atom_step(self):
         return self._AtomStep
+    @property
+    def Lattice(self):
+        return self._AtomStep.Lattice
     @property
     def lattice(self):
         return self._AtomStep.lattice
@@ -48,7 +54,7 @@ class Fundamental(ABC):
         return self._AtomStep.molecules
     @args.setter
     def args(self, args=None):
-        self._args = deepcopy(Args.arg_check(args))
+        self._args = Args.arg_check(args)
         if hasattr(self._args, "input"):
             self._title = self._args.input.split('.')[0] if hasattr(self._args, 'input') and self._args.input is not None else "position"
     @title.setter
@@ -56,7 +62,7 @@ class Fundamental(ABC):
         self._title = str(title)
     @elements.setter
     def elements(self, elements):
-        self._AtomStep.molecules.elements = self._AtomStep.atoms.elements = elements
+        self._elements = elements
     @atoms_info.setter
     def atoms_info(self, atoms_info):
         self._AtomStep.atoms.atoms_info = atoms_info
@@ -66,16 +72,23 @@ class Fundamental(ABC):
             self._AtomStep = atom_step
         else:
             raise ValueError("Only 'AtomStep_Trj' or 'AtomStep_Single_Point' can be imported.")
+    @Lattice.setter
+    def Lattice(self, Lattice):
+        self._AtomStep.Lattice = Lattice
     @lattice.setter
     def lattice(self, lattice):
         self._AtomStep.lattice = lattice
     @atoms.setter
-    def atoms(self, atom_list):
-        self._AtomStep.atoms = atom_list
+    def atoms(self, atoms):
+        self._AtomStep.atoms = atoms
     @molecules.setter
     def molecules(self, molecules):
         self._AtomStep.molecules = molecules
     def read_molecules(self, filepath=None):
+        if filepath is not None and not path.isfile(filepath):
+            filepath = None
+        if hasattr(self._args, "molecules") and self._args.molecules is not None and not path.isfile(self._args.molecules):
+            self._args.molecules = None
         if filepath is None and not hasattr(self._args, "molecules"):
             raise ValueError("'molecules' argument does not exist.")
         elif filepath is None and self._args.molecules is None:
@@ -84,7 +97,8 @@ class Fundamental(ABC):
                 if path.isfile(filepath):
                     with open(filepath) as read_file:
                         for row in read_file:
-                            if compile(r"^mol [a-zA-Z0-9]+$").match(row) is None and compile(r"^\d+(\,\d+)*$").match(row) is None:
+                            row = row.replace('\n', '')
+                            if fullmatch(r"mol [a-zA-Z0-9]+", row) is None and fullmatch(r"\d+(\,\d+)*", row) is None:
                                 print("Warning: Format of the molecules file is wrong.")
                                 break
                         else:
@@ -102,10 +116,12 @@ class Fundamental(ABC):
         for atom_idx, molecule in self._AtomStep.molecules.molecule_dictionary.items():
             for atom in molecule:
                 self._AtomStep.atoms.atoms_info[atom]["molecule"] = atom_idx
+    def _create_atom_step(self, input_obj=None, steps=None, atoms=None, **kwargs):
+        return None
 
 class Position(Fundamental):
-    def __init__(self, input_obj=None):
-        Fundamental.__init__(self, input_obj)
+    def __init__(self, input_obj=None, **kwargs):
+        super().__init__(input_obj=input_obj, **kwargs)
         self._scaling = 1
     @property
     def unit_conversion(self):
@@ -118,7 +134,7 @@ class Position(Fundamental):
         return self._AtomStep.fast_position
     @unit_conversion.setter
     def unit_conversion(self, scaling):
-        if compile(r'^\d+(\.\d+)?$').match(str(scaling)) is not None:
+        if fullmatch(r"\d+(\.\d+)?", str(scaling)) is not None:
             self._scaling = float(scaling)
         else:
             raise ValueError("The scaling number should be a positive float.")
@@ -130,8 +146,8 @@ class Position(Fundamental):
         self._AtomStep.fast_position = array(fast_pos)
 
 class Periodic(Fundamental):
-    def __init__(self, input_obj=None):
-        Fundamental.__init__(self, input_obj)
+    def __init__(self, input_obj=None, **kwargs):
+        super().__init__(input_obj=input_obj, **kwargs)
         from kit.accelerate import image_shift
         self.image_shift = image_shift
     @property
@@ -148,15 +164,11 @@ class Periodic(Fundamental):
         self._AtomStep.fractional_position = array(frac_pos)
 
 class Trajectory(Fundamental):
-    def __init__(self, input_obj=None, steps=None, atoms=None):
-        self._stepCounter = 0
+    def __init__(self, input_obj=None, steps=None, atoms=None, **kwargs):
+        super().__init__(input_obj=input_obj, steps=steps, atoms=atoms, **kwargs)
+        self._step_counter = 0
         self._cutoff_step = -1
-        Fundamental.__init__(self, input_obj)
-        self._AtomStep = AtomStep_Trj(input_obj, steps, atoms)
         self._title = "trajectory"
-    @property
-    def atom_step(self):
-        return self._AtomStep
     @property
     def steps(self):
         return self._AtomStep.steps
@@ -168,11 +180,11 @@ class Trajectory(Fundamental):
         pass
     @property
     def final_step(self):
-        return self._stepCounter + self._args.step - 1
-    @atom_step.setter
+        return self._step_counter + self._args.step - 1
+    @Fundamental.atom_step.setter
     def atom_step(self, AtomStep):
         if isinstance(AtomStep, AtomStep_Trj):
-            self._AtomStep = AtomStep
+            self._AtomStep = deepcopy(AtomStep)
         elif isinstance(AtomStep, AtomStep_Single_Point):
             self._AtomStep = AtomStep_Trj()
             self._AtomStep.bridge = AtomStep
@@ -199,27 +211,25 @@ class Trajectory(Fundamental):
     @steps_info.setter
     def steps_info(self, steps_info):
         self._AtomStep.steps_info = steps_info
+    def _create_atom_step(self, input_obj=None, steps=None, atoms=None, **kwargs):
+        return AtomStep_Trj(input_obj, steps, atoms)
 
 class Single_Point(Periodic, Position):
-    def __init__(self, input_obj=None, atoms=None):
+    def __init__(self, input_obj=None, atoms=None, **kwargs):
+        super().__init__(input_obj=input_obj, atoms=atoms, **kwargs)
         self._relax_flag = False
-        self._relax_border = 0
-        Periodic.__init__(self, input_obj)
-        Position.__init__(self, input_obj)
-        self._AtomStep = AtomStep_Single_Point(input_obj, atoms)
-    @property
-    def atom_step(self):
-        return self._AtomStep
+        self._relax_border = []
+        self._AtomStep = self._create_atom_step(input_obj=input_obj, atoms=atoms, **kwargs)
     @property
     def relax(self):
         return self._relax_flag
     @property
     def relax_border(self):
         return self._relax_border
-    @atom_step.setter
+    @Fundamental.atom_step.setter
     def atom_step(self, AtomStep):
         if isinstance(AtomStep, AtomStep_Single_Point):
-            self._AtomStep = AtomStep
+            self._AtomStep = deepcopy(AtomStep)
         elif isinstance(AtomStep, AtomStep_Trj):
             self._AtomStep = AtomStep_Single_Point()
             self._AtomStep.bridge = AtomStep
@@ -238,17 +248,22 @@ class Single_Point(Periodic, Position):
         self._relax_flag = relax_flag
     @relax_border.setter
     def relax_border(self, relax_border):
-        if compile(r"^-?\d+(\.\d+)?$").match(str(relax_border)) is not None:
+        if isinstance(relax_border, Iterable):
+            self._relax_border = relax_border
+        elif fullmatch(r"-?\d+(\.\d+)?", str(relax_border)) is not None:
             relax_border = float(relax_border)
             if -1 <= relax_border <= 1:
                 self._relax_border = relax_border
             else:
                 raise ValueError("The relax border should be between -1 and 1")
         else:
-            raise ValueError("The relax border should give a number between -1 and 1")
+            raise ValueError("The relax border should give a list or a number between -1 and 1")
+    def _create_atom_step(self, input_obj=None, steps=None, atoms=None, **kwargs):
+        return AtomStep_Single_Point(input_obj, atoms)
 
 class Charge:
-    def __init__(self):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self._charge, self._diff, self._ref = [], [], {}
     @property
     def reference(self):
@@ -263,12 +278,16 @@ class Charge:
     def reference(self, ref):
         self._ref = ref
 
+def _none_factory():
+    return None
+
 class Step:
-    def __init__(self, input_obj=None, put_flag=False):
+    def __init__(self, input_obj=None, put_flag=False, **kwargs):
+        super().__init__(**kwargs)
         self.__steps = []
         self._steps_info = defaultdict(dict)
         self._total_steps = -1
-        self._index_dict = {}
+        self._index_dict = defaultdict(_none_factory)
         if hasattr(input_obj, "bridge"):
             self.bridge = input_obj
             if put_flag:
@@ -278,7 +297,7 @@ class Step:
                     self.put(input_obj.steps)
         elif isinstance(input_obj, Args) or isinstance(input_obj, Namespace) or isinstance(input_obj, dict):
             self._args = Args.arg_check(input_obj)
-            self._start = self._args.step
+            self._start = self._args.step if hasattr(self._args, "step") else 1
         else:
             self._start = 1
     @property
@@ -299,11 +318,12 @@ class Step:
     @property
     def index_list(self):
         if self._index_dict == {}:
-            self._index_dict = {step: index for index, step in enumerate(self.__steps)}
+            for index, step in enumerate(self.__steps):
+                self._index_dict[step] = index
         return self._index_dict
     @start.setter
     def start(self, start):
-        if compile(r'^\-?\d+$').match(str(start)) is not None:
+        if fullmatch(r"\-?\d+", str(start)) is not None:
             self._start = int(start)
         else:
             raise ValueError("The start number should be an integer.")
@@ -340,17 +360,18 @@ class Step:
     @index_list.setter
     def index_list(self, index_list):
         if isinstance(index_list, dict):
-            self._index_dict = index_list
+            for step, index in index_list.items():
+                self._index_dict[step] = index
         else:
             raise ValueError("'index_list' should be 'dict'.")
     def put(self, input_steps):
-        if compile(r"^\-?\d+$").match(str(input_steps)) is not None:
-            input_steps = int(input_steps) - self._start + 1
+        if fullmatch(r"\-?\d+", str(input_steps)) is not None:
+            input_steps = int(input_steps)
             if input_steps > self._total_steps:
                 return -3
             self._steps(input_steps)
-        elif compile(r"^\-?\d+:\-?\d+(:\-?\d+)?$").match(str(input_steps)) is not None:
-            sp = [int(step)-self._start+1 for step in input_steps.split(':')]
+        elif fullmatch(r"\-?\d+:\-?\d+(:\-?\d+)?", str(input_steps)) is not None:
+            sp = [int(step) for step in input_steps.split(':')]
             if (len(sp) == 3 and int(sp[0]) > int(sp[2])) or (len(sp) == 2 and int(sp[0]) > int(sp[1])):
                 return -2
             elif min(sp) < 0 and min(sp)+self._total_steps+1 < 0:
@@ -372,7 +393,7 @@ class Step:
             else:
                 raise ValueError("Dimension should be one.")
             return 0
-        elif compile(r"^[a-zA-z]+$").match(str(input_steps)) is not None:
+        elif str(input_steps).isalpha():
             if input_steps.lower() == "end":
                 return 1
             elif input_steps.lower() == "all":
@@ -406,10 +427,7 @@ class Step:
     def delete(self):
         self.__steps = []
     def sort(self):
-        if self._start == 1:
-            self.__steps = sorted(self.__steps)
-        else:
-            self.__steps = sorted([step-self._start+1 for step in self.__steps])
+        self.__steps = sorted(self.__steps)
     @property
     def err_list(self):
         return defaultdict(int, {-4: "Warning: The negative numbers are too small.", -3: "Warning: Above the total steps.", -2: "Warning: The start number should be less than the end number.", -1: "Warning: Input error."})
@@ -440,19 +458,27 @@ class Step:
         self.__steps.extend(list(range(step_range[0], step_range[2], step_range[1])) if len(step_range) == 3 else list(range(step_range[0], step_range[1])))
 
 class Step_LAMMPS(Step):
-    def __init__(self, input_obj=None, put_flag=False):
-        Step.__init__(self, input_obj, put_flag)
+    def __init__(self, input_obj=None, put_flag=False, **kwargs):
+        super().__init__(input_obj=input_obj, put_flag=put_flag, **kwargs)
     def _set_total_steps(self):
         from os import popen
         with popen(f"grep TIMESTEP {self._args.input} 2> /dev/null | wc") as command:
             self._total_steps = int(command.read().split()[0])
 
+class Step_Gromacs(Step):
+    def __init__(self, input_object=None, put_flag=False, **kwargs):
+        super().__init__(input_object=input_object, put_flag=put_flag, **kwargs)
+    def _set_total_steps(self):
+        from os import popen
+        with popen(f"grep step {self._args.input} | wc") as command:
+            self._total_steps = int(command.read().split()[0])
+
 class Atom(Fundamental):
-    def __init__(self, input_obj=None, put_flag=False):
-        Fundamental.__init__(self, input_obj)
+    def __init__(self, input_obj=None, put_flag=False, **kwargs):
+        super().__init__(input_obj=input_obj, **kwargs)
         del self._AtomStep
         self._atom_list = []
-        self._index_dict = {}
+        self._index_dict = defaultdict(_none_factory)
         self._elements = []
         self._atoms_info = defaultdict(dict)
         self._molecules = Molecule(input_obj)
@@ -464,7 +490,7 @@ class Atom(Fundamental):
                 else:
                     self.put(input_obj.atoms)
         elif isinstance(input_obj, Args) or isinstance(input_obj, Namespace) or isinstance(input_obj, dict):
-            self._start = self._args.atom
+            self._start = self._args.atom if hasattr(self._args, "atom") else 0
         else:
             self._start = 0
         if hasattr(input_obj, "atoms_info"):
@@ -487,7 +513,8 @@ class Atom(Fundamental):
     @property
     def index_list(self):
         if self._index_dict == {}:
-            self._index_dict = {atom: index for index, atom in enumerate(self._atom_list)}
+            for index, atom in enumerate(self._atom_list):
+                self._index_dict[atom] = index
         return self._index_dict
     @property
     def molecule_kind(self):
@@ -499,18 +526,18 @@ class Atom(Fundamental):
         raise ValueError("atoms can not be defined.")
     @bridge.setter
     def bridge(self, software):
-        self.args, self.start = software.args, software.args.atom
+        self.args, self.start = software.args, software.args.atom if hasattr(software.args, "atom") else 1
         if hasattr(software, "atoms_info"):
             self.atoms_info = software.atoms_info
         if hasattr(software, "molecules"):
             self.molecules = software.molecules
-        if software.elements == [] and hasattr(software, 'read_elements'):
+        if hasattr(software, 'read_elements'):
             self.read_elements(software)
         elif software.elements != []:
             self.elements = software.elements
     @start.setter
     def start(self, start):
-        if compile(r'^\-?\d+$').match(str(start)) is not None:
+        if fullmatch(r"\-?\d+", str(start)) is not None:
             self._start = int(start)
         else:
             raise ValueError("The start number should be an integer.")
@@ -518,6 +545,8 @@ class Atom(Fundamental):
     def elements(self, elements):
         if isinstance(elements, list):
             self._elements = elements
+        elif isinstance(elements, tuple):
+            self._elements = list(elements)
         elif isinstance(elements, dict):
             self._elements = Convert.eleNum2elements(elements.keys(), elements.values())
         else:
@@ -532,7 +561,8 @@ class Atom(Fundamental):
     @index_list.setter
     def index_list(self, index_list):
         if isinstance(index_list, dict):
-            self._index_dict = index_list
+            for atom, index in index_list.items():
+                self._index_dict[atom] = index
         else:
             raise ValueError("'index_list' should be 'dict'.")
     @molecules.setter
@@ -548,13 +578,15 @@ class Atom(Fundamental):
     def molecule_dictionary(self, molecule_dictionary):
         self._molecules.molecule_dictionary = molecule_dictionary
     def put(self, input_atom_list):
-        if compile(r"^\-?\d+$").match(str(input_atom_list)) is not None:
+        if fullmatch(r"\-?\d+", str(input_atom_list)) is not None:
             if int(input_atom_list) > self._atom_num:
                 return -3
             self._atoms(input_atom_list)
-        elif isinstance(input_atom_list, str) and input_atom_list in self._elements:
+        elif fullmatch(r"\-?\d+(_\-?\d+)*", str(input_atom_list)) is not None:
+            self._atoms(input_atom_list.split('_'))
+        elif isinstance(input_atom_list, str) and all([element in self._elements for element in input_atom_list.split("_")]):
             self._atom_kind(input_atom_list)
-        elif compile(r"^\-?\d+:\-?\d+(:\-?\d+)?$").match(str(input_atom_list)) is not None:
+        elif fullmatch(r"\-?\d+:\-?\d+(:\-?\d+)?", str(input_atom_list)) is not None:
             sp = [int(atom)-self._start for atom in input_atom_list.split(':')]
             if (len(sp) == 3 and int(sp[0]) > int(sp[2])) or (len(sp) == 2 and int(sp[0]) > int(sp[1])):
                 return -2
@@ -563,7 +595,18 @@ class Atom(Fundamental):
             elif max(sp) > self._atom_num:
                 return -3
             self._interval(input_atom_list)
-        elif compile(r"^[a-zA-z0-9]+$").match(str(input_atom_list)) is not None:
+        elif "_except_" in str(input_atom_list):
+            original_atoms_str, except_atoms_str = input_atom_list.split("_except_")
+            original_atoms, except_atoms = Atom(self._args), Atom(self._args)
+            original_atoms.elements, except_atoms.elements = self._elements, self._elements
+            original_atoms.put(original_atoms_str); except_atoms.put(except_atoms_str)
+            if len(original_atoms.get()) == 0 or len(except_atoms.get()) == 0:
+                return -1
+            elif len(set(original_atoms.get()) - set(except_atoms.get())) == 0:
+                return -1
+            for atom in list(set(original_atoms.get()) - set(except_atoms.get())):
+                self._in_list_check(atom)
+        elif fullmatch(r"[0-9A-Za-z_]+", str(input_atom_list)) is not None:
             if input_atom_list.lower() == "end":
                 return 1
             elif input_atom_list.lower() == "all":
@@ -582,10 +625,10 @@ class Atom(Fundamental):
             else:
                 return -1
         elif isinstance(input_atom_list, Iterable):
-            if compile(r"^$").match(str(input_atom_list)) is not None:
+            if not str(input_atom_list).strip():
                 return -1
-            elif compile(r"^\-?\d+$").match(str(input_atom_list[0])) is not None:
-                self._atoms(input_atom_list)
+            elif fullmatch(r"\-?\d+", str(input_atom_list[0])) is not None:
+                return self._atoms(input_atom_list)
             elif isinstance(input_atom_list, str):
                 return -1
             else:
@@ -623,18 +666,20 @@ class Atom(Fundamental):
                 -4: "Warning: The negative numbers are too small.", -3: "Warning: Above the total steps.", \
                 -2: "Warning: The start number should be less than the end number.", -1: "Warning: Input error."})
     def _atoms(self, atoms):
-        if isinstance(atoms, int) or isinstance(atoms, str):
+        if isinstance(atoms, int) or (isinstance(atoms, str) and atoms.isdigit()):
             atoms = int(atoms)
             if atoms >= 0:
                 self._in_list_check(atoms-self._start)
             else:
                 self._in_list_check(atoms+self._atom_num-self._start)
-        elif isinstance(atoms, Iterable):
+        elif isinstance(atoms, Iterable) and not isinstance(atoms, str):
             for atom in atoms:
                 if int(atom) >= 0:
                     self._in_list_check(int(atom)-self._start)
                 else:
                     self._in_list_check(int(atom)+self._atom_num-self._start)
+        else:
+            return -1
     def _mol(self, inp):
         inp = inp.replace("mol", "").replace("_", "", 1)
         if inp in [_.split('_')[0] for _ in self._molecules.molecule_kind]:
@@ -643,16 +688,23 @@ class Atom(Fundamental):
                     for atom in self._molecules.molecule_dictionary[i]:
                         self._in_list_check(atom)
             return 0
-        elif inp in self._molecules.molecule_kind:
-            for atom in self._molecules.molecule_dictionary[self._molecules.molecule_kind.index(inp)]:
-                self._in_list_check(atom)
+        elif len(inp.split('_')) > 1 and f"{inp.split('_')[0]}_{inp.split('_')[1]}" in self._molecules.molecule_kind:
+            if len(inp.split('_')) == 2:
+                for atom in self._molecules.molecule_dictionary[self._molecules.molecule_kind.index(inp)]:
+                    self._in_list_check(atom)
+            else:
+                for element in inp.split("_")[2:]:
+                    for atom in self._molecules.molecule_dictionary[self._molecules.molecule_kind.index(f"{inp.split('_')[0]}_{inp.split('_')[1]}")]:
+                        if element == self._elements[atom]:
+                            self._in_list_check(atom)
             return 0
-        elif len(inp.split('_')) == 2 and inp.split('_')[1] in self._elements:
+        elif len([element in self._elements for element in inp.split('_')[1:]]) > 0 and all([element in self._elements for element in inp.split('_')[1:]]):
             for mol, kind in enumerate(self._molecules.molecule_kind):
                 if inp.split('_')[0] == kind.split('_')[0]:
-                    for atom in self._molecules.molecule_dictionary[mol]:
-                        if inp.split('_')[1] == self._elements[atom]:
-                            self._in_list_check(atom)
+                    for element in inp.split("_")[1:]:
+                        for atom in self._molecules.molecule_dictionary[mol]:
+                            if element == self._elements[atom]:
+                                self._in_list_check(atom)
             return 0
         else:
             return -7
@@ -674,34 +726,10 @@ class Atom(Fundamental):
                 print("Warning: Two or three numbers separated by ':'.")
         self._atom_list.extend(list(range(atom_range[0], atom_range[1])) if len(atom_range) == 2 else list(range(atom_range[0], atom_range[2], atom_range[1])))
     def _atom_kind(self, inp):
-        element = inp.split('_')[0]
-        tmp = []
-        for idx, atom in enumerate(self._elements):
-            if element == atom:
-                tmp.append(idx)
-        if inp in self._elements:
-            for atom in tmp:
+        atoms = [idx for idx, element in enumerate(self._elements) if element in inp.split('_')]
+        if len(atoms) > 0:
+            for atom in atoms:
                 self._in_list_check(atom)
-        elif inp.split('_')[1].lower() == "except":
-            except_num = []
-            for split in inp.split('_')[2:]:
-                if split.isdigit():
-                    except_num += [int(split)-self._start]
-                elif compile(r"^\d+(:\d+){1,2}$").match(split):
-                    sp = split.split(':')
-                    except_num += list(range(int(sp[0])-self._start, int(sp[2])-self._start+1, int(sp[1]))) if len(sp) == 3 else list(range(int(sp[0])-self._start, int(sp[1])-self._start+1))
-                elif compile(r"^-\d+(:-?\d+)?(:-\d+)?$").match(split):
-                    sp = split.split(':')
-                    if sp[-1] != "-1":
-                        s = slice(int(sp[0]), int(sp[2])+1, int(sp[1])) if len(sp) == 3 else slice(int(sp[0]), int(sp[1])+1)
-                    else:
-                        s = slice(int(sp[0]), None, int(sp[1])) if len(sp) == 3 else slice(int(sp[0]), None)
-                    except_num += tmp[s]
-                else:
-                    return -1
-            for atom in tmp:
-                if atom not in except_num:
-                    self._in_list_check(atom)
         else:
             return -1
     def _in_list_check(self, atom):
@@ -722,53 +750,101 @@ class Atom(Fundamental):
                 sp = split(r"[^a-zA-Z0-9]", row)
                 if "mol" in sp[0]:
                     tmp.append(sp[1])
-                elif compile(r"^\d+(\,\d+)*$").match(row) is not None:
+                elif fullmatch(r"\d+(\,\d+)*", row) is not None:
                     for _ in [int(_) for _ in row.split(',')]:
                         self._atoms_info[_]["molecule"] = molecule
                     molecule += 1
     def read_elements(self, software, filepath=None):
         self._elements = software.read_elements() if software.elements == [] else software.elements
-        if filepath is not None or (hasattr(self._args, 'sdelements') and self._args.sdelements is not None):
-            if filepath is None and path.isfile(self._args.sdelements):
-                filepath = self._args.sdelements
-            elif filepath is None and not path.isfile(self._args.sdelements):
-                raise FileNotFoundError("'sdelements' file not found.")
+        if filepath is not None or (hasattr(self._args, 'elementfile') and self._args.elementfile is not None):
+            if filepath is None and path.isfile(self._args.elementfile):
+                filepath = self._args.elementfile
+            elif filepath is None and not path.isfile(self._args.elementfile):
+                raise FileNotFoundError("'elementfile' file not found.")
             with open(filepath) as read_file:
+                self._elements = list(self._elements)
                 for idx, line in enumerate(read_file):
-                    sp = line.replace('\n', '').split()
-                    if idx == 0 and compile(r"^[A-Za-z]+( [A-Za-z]+)*$").match(line) is not None:
+                    line, sp = line.replace('\n', ''), line.replace('\n', '').split()
+                    if idx == 0 and fullmatch(r"[A-Za-z]+( [A-Za-z]+)*", line) is not None:
                         self._elements = sp
                         break
-                    elif compile(r"^[A-Za-z]+ \d+(:\d+){0,2}$").match(line) is not None:
-                        elements = [int(num) - self._args.atom for num in sp[1].split(':')]
-                        if len(elements) == 1:
-                            self._elements[elements[0]] = sp[0]
-                        elif len(elements) == 2:
-                            for i in range(elements[0], elements[1]+1):
-                                self._elements[i] = sp[0]
-                        elif len(elements) == 3:
-                            for i in range(elements[0], elements[2]+1, elements[1]):
-                                self._elements[i] = sp[0]
+                    elif fullmatch(r"[A-Za-z0-9]+: [A-Za-z0-9_:,]+", line) is not None:
+                        atoms = Atom(self._args)
+                        atoms.elements = self._elements
+                        for inp in sp[1].split(','):
+                            err_return = atoms.put(inp)
+                            if err_return:
+                                print(f"line {idx+1}:", atoms.err_list[err_return], "Skip this line.")
+                                break
+                        else:
+                            for atom in atoms.get():
+                                self._elements[atom] = sp[0].replace(':', '')
+                    elif not line.strip():
+                        continue
                     else:
                         print(f"Warning: Input proper format in line {idx+1}. Skip this line.")
+                self._elements = tuple(self._elements)
+        self._atom_num = len(self._elements)
 
-def default():
-    return 1.9
+def grid(cen_pos: np.ndarray,
+         mea_pos: np.ndarray,
+         lattice: np.ndarray,
+         wrap: np.ndarray):
+    """
+    cen_pos: (N_cen, 1, 1, 3)
+    mea_pos: (1, N_mea, 1, 3)
+    lattice: (3, 3)
+    wrap:    (1, 1, N_wrap, 3)
+    """
+
+    # 直接使用 broadcasting 加總後乘 lattice
+    cen_pos_new = np.matmul(cen_pos, lattice)  # (N_cen, 1, 1, 3)
+    mea_pos_new = np.matmul(mea_pos + wrap, lattice)  # (1, N_mea, N_wrap, 3)
+
+    return cen_pos_new, mea_pos_new
+
+def distance_matrix_wrap(cen_pos: np.ndarray,
+                         mea_pos: np.ndarray,
+                         lattice: np.ndarray,
+                         wrap: np.ndarray) -> np.ndarray:
+    """
+    cen_pos: (N_cen, 3)
+    mea_pos: (N_mea, 3)
+    lattice: (3, 3)
+    wrap:    (N_wrap, 3)
+    """
+
+    # broadcasting reshape
+    cen_pos_b = cen_pos[:, None, None, :]   # (N_cen, 1, 1, 3)
+    mea_pos_b = mea_pos[None, :, None, :]   # (1, N_mea, 1, 3)
+    wrap_b    = wrap[None, None, :, :]      # (1, 1, N_wrap, 3)
+
+    # 套用 grid 計算座標
+    cen, mea = grid(cen_pos_b, mea_pos_b, lattice, wrap_b)
+
+    # 向量差
+    vectors = cen - mea
+
+    # 計算每一個向量的 L2 norm → (N_cen, N_mea, N_wrap)
+    dist = np.linalg.norm(vectors, axis=3)
+
+    return dist
+
 class Molecule(Fundamental):
-    def __init__(self, input_obj=None):
-        Fundamental.__init__(self, input_obj)
+    def __init__(self, input_obj=None, **kwargs):
+        super().__init__(input_obj=input_obj, **kwargs)
         del self._AtomStep
         self._mole_dict = defaultdict(list)
         self._mole_kind = []
         self._mole_pos_dict = defaultdict(list)
-        self._bond_type = defaultdict(default)
+        self._bond_type = defaultdict(float)
         self._frac_flag, self._cart_flag = False, False
         self._atom_list = None
         if hasattr(input_obj, "bridge"):
             self.bridge = input_obj
         else:
             self.args = input_obj
-        if hasattr(self._args, 'molecules') and self._args.molecules is not None:
+        if hasattr(self._args, 'molecules') and self._args.molecules is not None and path.isfile(self._args.molecules):
             self.read_molecules(self._args.molecules)
     @property
     def bridge(self):
@@ -776,9 +852,6 @@ class Molecule(Fundamental):
     @property
     def threshold(self):
         return self._bond_type
-    @property
-    def elements(self):
-        return self._elements
     @property
     def lattice(self):
         return self._lattice
@@ -801,18 +874,18 @@ class Molecule(Fundamental):
     def bridge(self, software):
         self.args, self.lattice, self.elements = software.args, software.lattice, software.elements
         if hasattr(software, 'atom_step'):
-            self._atom_list = software.atom_step.atom_list
-        elif hasattr(software, 'atom_list'):
-            self._atom_list = software.atom_list
+            self._atom_list = software.atoms.get()
+            self._bond_type = software.molecules.threshold
     @threshold.setter
     def threshold(self, bond_type):
         if isinstance(bond_type, dict):
-            self._bond_type = bond_type
+            if self._bond_type == {}:
+                self._bond_type = bond_type
+            else:
+                for key, val in bond_type.items():
+                    self._bond_type[key] = val
         else:
             raise Exception("'threshold' should be a dictionary.")
-    @elements.setter
-    def elements(self, elements):
-        self._elements = elements
     @lattice.setter
     def lattice(self, lattice):
         self._lattice = lattice
@@ -851,19 +924,21 @@ class Molecule(Fundamental):
                 raise FileNotFoundError("'bond' file not found.")
             elif filepath is None and not hasattr(self._args, 'bond'):
                 raise ValueError("No 'bond' argument provided.")
+            self.build_threshold()
             with open(filepath) as read_file:
                 row = 0
                 for line in read_file:
                     row += 1
-                    if len(line.split()[0].split('-')) == 2:
-                        if line.split()[0].split('-')[0] not in self._elements:
-                            print(f"Warning: {line.split()[0].split('-')[0]} in row {row} does not exist in this system. Skip this row.")
-                        elif line.split()[0].split('-')[1] not in self._elements:
-                            print(f"Warning: {line.split()[0].split('-')[1]} in row {row} does not exist in this system. Skip this row.")
-                        elif compile(r"^\d+\.?\d*$").match(line.split()[1]) is None:
+                    line = line.replace('\n', '')
+                    if fullmatch(r"[A-Za-z]{1,2}-[A-Za-z]{1,2} -?\d+\.?\d+", line) is not None:
+                        sp = line.split()[0].split('-')
+                        if sp[0] not in self._elements:
+                            print(f"Warning: {sp[0]} in row {row} does not exist in this system. Skip this row.")
+                        elif sp[1] not in self._elements:
+                            print(f"Warning: {sp[1]} in row {row} does not exist in this system. Skip this row.")
+                        elif float(line.split()[1]) < 0:
                             print(f"Warning: {line.split()[1]} in row {row} should be a positive number. Skip this row.")
                         else:
-                            sp = line.split()[0].split('-')
                             self._bond_type[f'{sp[0]}-{sp[1]}'] = self._bond_type[f'{sp[1]}-{sp[0]}'] = float(line.split()[1])
                     else:
                         print(f"Warning: Input proper format in row {row}. Skip this row.")
@@ -873,18 +948,24 @@ class Molecule(Fundamental):
                 filepath = self._args.molecules
             elif filepath is None and hasattr(self._args, 'molecules') and self._args.molecules is not None and not path.isfile(self._args.molecules):
                 raise FileNotFoundError("'molecules' file not found.")
-            elif (filepath is None and not hasattr(self._args, 'molecules')) or self._args.molecules is None:
+            elif (filepath is None or not hasattr(self._args, 'molecules')) and self._args.molecules is None:
                 raise ValueError("No 'molecules' argument provided.")
+            elif filepath is not None and hasattr(self._args, 'molecules') and self._args.molecules is not None and not path.isfile(self._args.molecules):
+                raise FileNotFoundError("'molecules' file not found.")
+            elif self._args.molecules is None:
+                self._args.molecules = filepath
             with open(filepath) as read_file:
                 mole_kind = []
                 former_mole_kind = ""
                 molecule = 0
+                if self._atom_list is not None:
+                    atom_dict = {atom: atom in self._atom_list for atom in range(len(self._elements))}
                 for row in read_file:
                     row = row.replace('\n', '')
                     sp = split(r"[^a-zA-Z0-9]", row)
                     if "mol" in sp[0]:
                         mole_kind.append(sp[1])
-                    elif compile(r"^\d+(\,\d+)*$").match(row) is not None:
+                    elif fullmatch(r"\d+(\,\d+)*", row) is not None:
                         if mole_kind == []:
                             mole_kind.append("mol")
                         if mole_kind[-1] != former_mole_kind:
@@ -894,14 +975,14 @@ class Molecule(Fundamental):
                             kind_counter += 1
                         if self._atom_list is not None:
                             for atom in sorted([int(_) for _ in row.split(',')]):
-                                if atom-self._args.atom in self._atom_list:
+                                if atom_dict[atom-self._args.atom]:
                                     self._mole_dict[molecule].append(atom-self._args.atom)
                         else:
-                            self._mole_dict[molecule] = sorted([int(_) for _ in row.split(',')])
+                            self._mole_dict[molecule] = sorted([int(atom)-self._args.atom for atom in row.split(',')])
                         self._mole_kind.append(mole_kind[-1]+f"_{kind_counter}")
                         molecule += 1
     def molecule_wrap(self):
-        from kit.accelerate import image_shift, shift_to_origin, distance_matrix_wrap
+        from kit.accelerate import image_shift, shift_to_origin
         if not self._frac_flag:
             from kit.accelerate import c2f_acc
             for key, position in self._mole_pos_dict.items():
@@ -931,8 +1012,6 @@ class Molecule(Fundamental):
                         first_step_positions[j] += period_images[k]
                         dist_mat = distance_matrix_wrap(first_step_positions, first_step_positions, self._lattice, period_images)
                         searched.append(j)
-                    break
-            
             if position.ndim == 3:
                 position[0] = first_step_positions
                 self._mole_pos_dict[key] = image_shift(position, self._lattice, cartesian=0)
@@ -950,11 +1029,11 @@ class Molecule(Fundamental):
                 self._bond_type[f"{elements[i]}-{elements[j]}"] = self._bond_type[f"{elements[j]}-{elements[i]}"] = bond_threshold if bond_threshold < 2.3 else 2.3
 
 class AtomStep(ABC):
-    def __init__(self, input_obj=None, atoms=None, steps=None):
+    def __init__(self, input_obj=None, atoms=None, steps=None, **kwargs):
+        super().__init__(**kwargs)
         from kit.accelerate import c2f, f2c
         self._atoms = Atom(input_obj) if atoms is None else atoms
         self._steps = Step(input_obj) if steps is None else steps
-        self._atom_list = []
         self._atom_dict = defaultdict(list)
         self._molecules = Molecule(input_obj)
         self._lattice = Lattice()
@@ -964,6 +1043,9 @@ class AtomStep(ABC):
             self.bridge = input_obj
         else:
             self.args = input_obj
+        if hasattr(self._args, "molecules") and self._args.molecules is not None:
+            if path.isfile(self._args.molecules):
+                self._molecules.read_molecules(self._args.molecules)
     @property
     def args(self):
         return getattr(self, "_args", None)
@@ -974,14 +1056,14 @@ class AtomStep(ABC):
     def atoms(self):
         return self._atoms
     @property
-    def atom_list(self):
-        return self._atom_list
-    @property
     def elements(self):
         return self._atoms.elements
     @property
     def atoms_info(self):
         return self._atoms.atoms_info
+    @property
+    def Lattice(self):
+        return self._lattice
     @property
     def lattice(self):
         return self._lattice.lattice
@@ -1010,11 +1092,11 @@ class AtomStep(ABC):
         self.args = software.args
         self.atoms = software.atoms
         self._molecules.bridge = software
+        self.Lattice = software.Lattice
     @atoms.setter
     def atoms(self, atoms):
         if isinstance(atoms, Atom):
             self._atoms = atoms
-            self._atom_list = atoms.get()
         else:
             raise ValueError(f"Only 'Atom' class can be imported (Imported type: {type(atoms)}).")
     @elements.setter
@@ -1024,6 +1106,12 @@ class AtomStep(ABC):
     @atoms_info.setter
     def atoms_info(self, atoms_info):
         self._atoms.atoms_info = atoms_info
+    @Lattice.setter
+    def Lattice(self, lattice):
+        if isinstance(lattice, Lattice):
+            self._lattice = lattice
+        else:
+            raise ValueError(f"Only 'Lattice' class can be imported (Imported type: {type(lattice)}).")
     @lattice.setter
     def lattice(self, lattice):
         lattice = array(lattice)
@@ -1054,28 +1142,63 @@ class AtomStep(ABC):
     def fast_step(self):
         self._fast_pos.append(self._tmp_pos)
         self._tmp_pos = []
-    def fast_append(self, atom, AtomStep):
-        self._tmp_pos.append(AtomStep)
-        self._atoms.elements.append(self._atoms.atoms_info[atom]["element"])
+    def fast_append(self, position, atom):
+        self._tmp_pos.append(position)
     def put(self, position, atom):
         self._atom_dict[atom].append(position)
     @abstractmethod
+    def split(self, atom_step, steps, atoms):
+        if atom_step.__class__.__bases__[0] != AtomStep:
+            raise ValueError("Only 'AtomStep_Trj' or 'AtomStep_Single_Point' can be imported.")
+        atoms.sort()
+        steps.sort()
+        self.atoms = atoms
+        self.steps = steps
+        original_step, original_atom = atom_step.steps.get(), atom_step.atoms.get()
+        original_step_dict = {step: True if step in original_step else False for step in steps.get()}
+        original_atom_dict = {atom: True if atom in original_atom else False for atom in atoms.get()}
+        positions = []
+        step_dict, atom_dict = atom_step.steps.index_list, atom_step.atoms.index_list
+        for step in steps.get():
+            position = []
+            if original_step_dict[step]:
+                step_idx = step_dict[step]
+                for atom in atoms.get():
+                    if original_atom_dict[atom]:
+                        atom_idx = atom_dict[atom]
+                        position.append(atom_step.fractional_position[step_idx, atom_idx])
+                positions.append(position)
+        if atom_step.fractional_flag:
+            self._frac_pos = array(positions)
+            self._frac_flag = True
+        else:
+            self._cart_pos = array(positions)
+            self._cart_flag = True
+        if len(self._atoms.elements) != len(self._atoms.get()):
+            self._atoms.elements = []
+            for atom in self._atoms.get():
+                self._atoms.elements.append(atom_step.atoms.elements[atom_dict[atom]])
+            self._molecules.elements = self._atoms.elements
+    @abstractmethod
     def lock(self):
-        if not hasattr(self._args, "molecules") and "molecule" in self._atoms.atoms_info[self._atom_list[0]].keys():
-            for key in self._atom_list:
+        atom_list = self._atoms.get()
+        if not hasattr(self._args, "molecules") and len(self._atoms.atoms_info) > 0 and "molecule" in self._atoms.atoms_info[atom_list[0]].keys():
+            for key in atom_list:
                 self._molecules.molecule_dictionary[self._atoms.atoms_info[key]["molecule"]].append(key)
                 self._atoms.atoms_info[key].pop("molecule")
                 self.build_molecule_position()
-        if self._atoms.elements == []:
-            for key in self._atom_list:
+        if len(self._atoms.elements) and len(list(self._atoms.atoms_info.keys())) > 0 and hasattr(self._atoms.atoms_info[list(self._atoms.atoms_info.keys())[0]], "element"):
+            for key in atom_list:
                 self._atoms.elements.append(self._atoms.atoms_info[key]["element"])
                 self._atoms.atoms_info[key].pop("element")
+            self._molecules.elements = self._atoms.elements
+
         if self._frac_flag:
             self._frac_pos = []
             for atom in self._atoms.get():
                 self._frac_pos.append(self._atom_dict[atom])
-            self._frac_pos = array(self._frac_pos).transpose((1, 0, 2))
-        else:
+            self._frac_pos = array(self._frac_pos).transpose((1, 0, 2)) if array(self._frac_pos).ndim == 3 else array(self._frac_pos)
+        if self._cart_flag:
             self._cart_pos = []
             for atom in self._atoms.get():
                 self._cart_pos.append(self._atom_dict[atom])
@@ -1094,17 +1217,18 @@ class AtomStep(ABC):
         if position.ndim == 3:
             position = position.transpose((1, 0, 2))
         self._molecules.cartesian_flag, self._molecules.fractional_flag = self._cart_flag, self._frac_flag
+        atom_dict = self._atoms.index_list
         for key, val in self._molecules.molecule_dictionary.items():
-            if val[0] not in self._atom_list:
+            if atom_dict[val[0]]:
                 continue
             for atom in val:
-                self._molecules.molecule_position[key].append(position[self._atoms.index_list[atom]])
+                self._molecules.molecule_position[key].append(position[atom_dict[atom]])
             self._molecules.molecule_position[key] = array(self._molecules.molecule_position[key]).transpose((1, 0, 2)) if position.ndim == 3 else array(self._molecules.molecule_position[key])
         self._molecules.molecule_wrap()
 
 class AtomStep_Trj(AtomStep):
-    def __init__(self, input_obj=None, steps=None, atoms=None):
-        AtomStep.__init__(self, input_obj, atoms, steps)
+    def __init__(self, input_obj=None, steps=None, atoms=None, **kwargs):
+        super().__init__(input_obj=input_obj, atoms=atoms, steps=steps, **kwargs)
         from kit.accelerate import c2f_acc, f2c_acc
         self.c2f_acc, self.f2c_acc = c2f_acc, f2c_acc
     @property
@@ -1157,10 +1281,8 @@ class AtomStep_Trj(AtomStep):
         else:
             raise ValueError("Only 'list' and 'ndarray' can be imported.")
         steps = self._steps.get(slice_flatten=True)
-        if self._atom_list == []:
-            self._atom_list = self._atoms.get()
         assert self._cart_pos.shape[0] == len(steps), f"The first dimension of cartesian_position should be equal to the number of steps. ({self._cart_pos.shape[0]} != {len(steps)})"
-        assert self._cart_pos.shape[1] == len(self._atom_list), f"The second dimension of cartesian_position should be equal to the number of atoms. ({self._cart_pos.shape[1]} != {len(self._atom_list)})"
+        assert self._cart_pos.shape[1] == len(self._atoms.get()), f"The second dimension of cartesian_position should be equal to the number of atoms. ({self._cart_pos.shape[1]} != {len(self._atoms.get())})"
         self._cart_flag = True
     @fractional_position.setter
     def fractional_position(self, frac_pos):
@@ -1177,10 +1299,8 @@ class AtomStep_Trj(AtomStep):
         else:
             raise ValueError("Only 'list' and 'ndarray' can be imported.")
         steps = self._steps.get(slice_flatten=True)
-        if self._atom_list == []:
-            self._atom_list = self._atoms.get()
         assert self._frac_pos.shape[0] == len(steps), f"The first dimension of fractional_position should be equal to the number of steps. ({self._frac_pos.shape[0]} != {len(steps)})"
-        assert self._frac_pos.shape[1] == len(self._atom_list), f"The second dimension of fractional_position should be equal to the number of atoms. ({self._frac_pos.shape[1]} != {len(self._atom_list)})"
+        assert self._frac_pos.shape[1] == len(self._atoms.get()), f"The second dimension of fractional_position should be equal to the number of atoms. ({self._frac_pos.shape[1]} != {len(self._atoms.get())})"
         self._frac_flag = True
     @fast_position.setter
     def fast_position(self, fast_pos):
@@ -1194,22 +1314,22 @@ class AtomStep_Trj(AtomStep):
         else:
             raise ValueError("Only 'list' and 'ndarray' can be imported.")
         steps = self._steps.get(slice_flatten=True)
-        if self._atom_list == []:
-            self._atom_list = self._atoms.get()
         assert self._fast_pos.shape[0] == len(steps), f"The first dimension of fast_position should be equal to the number of steps. ({self._fast_pos.shape[0]} != {len(steps)})"
-        assert self._fast_pos.shape[1] == len(self._atom_list), f"The second dimension of fast_position should be equal to the number of atoms. ({self._fast_pos.shape[1]} != {len(self._atom_list)})"
+        assert self._fast_pos.shape[1] == len(self._atoms.get()), f"The second dimension of fast_position should be equal to the number of atoms. ({self._fast_pos.shape[1]} != {len(self._atoms.get())})"
     @steps.setter
     def steps(self, steps):
         if isinstance(steps, Step):
             self._steps = steps
         else:
             raise ValueError("Only 'Step' class can be imported.")
+    def split(self, atom_step, steps, atoms):
+        super().split(atom_step, steps, atoms)
     def lock(self):
         super().lock()
 
 class AtomStep_Single_Point(AtomStep):
-    def __init__(self, input_obj=None, atoms=None):
-        AtomStep.__init__(self, input_obj, atoms)
+    def __init__(self, input_obj=None, atoms=None, **kwargs):
+        super().__init__(input_obj=input_obj, atoms=atoms, **kwargs)
         del self._steps
     @property
     def lattice(self):
@@ -1255,9 +1375,7 @@ class AtomStep_Single_Point(AtomStep):
         else:
             raise ValueError("Only 'list' and 'ndarray' can be imported.")
         assert self._cart_pos.ndim == 2, "Only two-dimensional cartesian data can be imported."
-        if self._atom_list == []:
-            self._atom_list = self._atoms.get()
-        assert self._cart_pos.shape[0] == len(self._atom_list), f"The first dimension of cartesian_position should be equal to the number of atoms. ({self._cart_pos.shape[0]} != {len(self._atom_list)})"
+        assert self._cart_pos.shape[0] == len(self._atoms.get()), f"The first dimension of cartesian_position should be equal to the number of atoms. ({self._cart_pos.shape[0]} != {len(self._atoms.get())})"
         self._cart_flag = True
     @fractional_position.setter
     def fractional_position(self, frac_pos):
@@ -1270,9 +1388,7 @@ class AtomStep_Single_Point(AtomStep):
         else:
             raise ValueError("Only 'list' and 'ndarray' can be imported.")
         assert self._frac_pos.ndim == 2, f"Only two-dimensional fractional data can be imported. ({frac_pos.ndim} != 2)"
-        if self._atom_list == []:
-            self._atom_list = self._atoms.get()
-        assert self._frac_pos.shape[0] == len(self._atom_list), f"The first dimension of fractional_position should be equal to the number of atoms. ({self._frac_pos.shape[0]} != {len(self._atom_list)})"
+        assert self._frac_pos.shape[0] == len(self._atoms.get()), f"The first dimension of fractional_position should be equal to the number of atoms. ({self._frac_pos.shape[0]} != {len(self._atoms.get())})"
         self._frac_flag = True
     @fast_position.setter
     def fast_position(self, fast_pos):
@@ -1285,11 +1401,39 @@ class AtomStep_Single_Point(AtomStep):
         else:
             raise ValueError("Only 'list' and 'ndarray' can be imported.")
         assert self._fast_pos.ndim == 2, "Only two-dimensional fractional data can be imported."
-        if self._atom_list == []:
-            self._atom_list = self._atoms.get()
-        assert self._fast_pos.shape[0] == len(self._atom_list), f"The first dimension of fast_position should be equal to the number of atoms. ({self._fast_pos.shape[0]} != {len(self._atom_list)})"
+        assert self._fast_pos.shape[0] == len(self._atoms.get()), f"The first dimension of fast_position should be equal to the number of atoms. ({self._fast_pos.shape[0]} != {len(self._atoms.get())})"
+    def split(self, atom_step, atoms):
+        if atom_step.__class__.__bases__[0] != AtomStep:
+            raise ValueError("Only 'AtomStep_Trj' or 'AtomStep_Single_Point' can be imported.")
+        self.atoms = atoms
+        original_atom = atom_step.atoms.get()
+        if atom_step.fractional_flag:
+            self._frac_pos = []
+            for atom in atoms.get():
+                if atom in original_atom:
+                    atom_idx = atom_step.atoms.index_list[atom]
+                    self._frac_pos.append(atom_step.fractional_position[atom_idx])
+            self._frac_pos = array(self._frac_pos)
+        else:
+            self._cart_pos = []
+            for atom in atoms.get():
+                if atom in original_atom:
+                    atom_idx = atom_step.atoms.index_list[atom]
+                    self._cart_pos.append(atom_step.cartesian_position[atom_idx])
+            self._cart_pos = array(self._cart_pos)
+        if len(self._atoms.elements) != len(self._atoms.get()):
+            self._atoms.elements = []
+            for atom in self._atoms.get():
+                self._atoms.elements.append(atom_step.atoms.elements[atom_step.atoms.index_list[atom]])
+            self._molecules.elements = self._atoms.elements
     def lock(self):
         super().lock()
+        if self._frac_flag:
+            self._frac_pos = self._frac_pos[0]
+        if self._cart_flag:
+            self._cart_pos = self._cart_pos[0]
+        if self._fast_flag:
+            self._fast_pos = self._fast_pos[0]
 
 class Convert:
     @staticmethod
@@ -1311,141 +1455,9 @@ class Convert:
                 elements.append(element)
         return elements
 
-class Args:
-    def __init__(self, default=None, arg_func=None):
-        args = ArgumentParser()
-        if arg_func is None:
-            arg_func = self.func
-        
-        args = arg_func(default, args)
-        
-        self.__args = args.parse_args()
-    def func(self, default=None, args=None):
-        args.add_argument("input", type=str, nargs='?', help="input file or directory path")
-        args.add_argument("-step", dest="step", type=int, default=1, help="initial step number of the trajectory file. default is 1")
-        args.add_argument("-atom", dest="atom", type=int, default=0, help="initial atom number. default is 0")
-        args.add_argument("-stepfile", dest="stepfile", type=str, default=None, help="provide the step information. default is None")
-        args.add_argument("-atomfile", dest="atomfile", type=str, default=None, help="provide the atom information. default is None")
-        args.add_argument("-elementfile", dest="elementfile", type=str, default="Atoms.txt", help="provide the elements information when the input file does not include, e.g., QE, and CONQUEST. default is Atoms.txt.")
-        args.add_argument("-sdelements", dest="sdelements", type=str, default=None, help="provide self-defined elements information.")
-        if isinstance(default, dict):
-            for key in default.keys():
-                if key == "output" and not isinstance(default[key], list):
-                    args.add_argument("-output", dest="output", type=str, default=default[key], help=f"output file or directory name. default is {default[key]}")
-                elif isinstance(default[key], Iterable) and len(default[key]) == 3:
-                    args.add_argument(f"-{key}", dest=key, type=default[key][1], default=default[key][0], help=f"{default[key][2]}")
-                elif isinstance(default[key], Iterable) and len(default[key]) == 2:
-                    args.add_argument(f"-{key}", dest=key, type=default[key][0].__class__, default=default[key][0], help=f"{default[key][1]}")
-                elif isinstance(default[key], Iterable) and isinstance(default[key], str):
-                    args.add_argument(f"-{key}", dest=key, type=default[key].__class__, default=default[key], help=f"{default[key]}")
-                elif isinstance(default[key], Iterable):
-                    args.add_argument(f"-{key}", dest=key, type=default[key][0].__class__, default=default[key][0], help=f"{default[key][0]}")
-                else:
-                    args.add_argument(f"-{key}", dest=key, type=default[key].__class__, default=default[key], help=f"{key}")
-        elif default is not None:
-            raise ValueError("default should be a dictionary.")
-        return args
-    @property
-    def args(self):
-        return self.__args
-    @property
-    def input_type(self):
-        return self.__inputType
-    @input_type.setter
-    def input_type(self, inputType):
-        self.__inputType = inputType
-    @staticmethod
-    def same_name(present_path, filename, factor=0):
-        while(1):
-            if "_Alpha=" in filename:
-                repeat = True
-            else:
-                repeat = False
-            if filename is None:
-                break
-            if factor and not repeat:
-                tmp = path.splitext(filename)
-                filename = tmp[0] + f"_Alpha={factor}" + tmp[1]
-            file = path.join(present_path, filename)
-            if path.isfile(file):
-                action = input(f"Warning: '{filename}' file exists in '{present_path}'. Delete, move, or rename (d/m/n): ")
-                repeat = True
-            elif path.isfile(f"{file}.csv"):
-                action = input(f"Warning: '{filename}.csv' file exists in '{present_path}'. Delete, move, or rename (d/m/n): ")
-                filename += ".csv"
-                repeat = True
-            elif path.isfile(f"{file}.dat"):
-                action = input(f"Warning: '{filename}.dat' file exists in '{present_path}'. Delete, move, or rename (d/m/n): ")
-                filename += ".dat"
-                repeat = True
-            elif path.isdir(file):
-                action = input(f"Warning: '{filename}' directory exists in '{present_path}'. Delete, move, or rename (d/m/n): ")
-                repeat = True
-            else:
-                return filename
-            Args.action(present_path, filename, action)
-    def input_check(self):
-        self.__args.input = self.input_file_check(self.__args.input, self.__inputType)
-    def action(present_path, filename, action):
-        filePath = path.join(present_path, filename)
-        if action.lower() == 'd' and path.isdir(filePath):
-            from shutil import rmtree
-            rmtree(filePath)
-        elif action.lower() == 'd' and path.isfile(filePath):
-            from os import remove
-            remove(filePath)
-        elif action.lower() == 'n':
-            from os import rename
-            newName = input("New name: ")
-            rename(filePath, path.join(present_path, newName))
-        elif action.lower() == 'm':
-            from shutil import move
-            newPath = input("New path: ")
-            if path.isdir(newPath):
-                move(filePath, newPath)
-            else:
-                print("Warning: Provide a path to existence.")
-    @staticmethod
-    def input_file_check(input_path, input_type, mandatory=True, isdir=False):
-        while(1):
-            if input_path is None:
-                input_path = input(f"Input {input_type} path: ")
-            elif input_path is None and not mandatory:
-                input_path = input(f"Input {input_type} path (If not needed, input 'no'): ")
-            if not mandatory and input_path.lower() == "no":
-                return None
-            if not isdir:
-                if path.isfile(input_path):
-                    return input_path
-                elif path.isfile(path.join(input_path, input_type)):
-                    return path.join(input_path, input_type)
-                elif path.isfile(input_path+input_type):
-                    return input_path+input_type
-                elif path.isfile(input_path+"."+input_type):
-                    return input_path+"."+input_type
-                else:
-                    print(f"Warning: '{input_type}' does not exist in {path.abspath(input_path)}.\n")
-                    input_path = None
-            else:
-                if path.isdir(input_path):
-                    return input_path
-                elif path.isdir(path.join(input_path, input_type)):
-                    return path.join(input_path, input_type)
-                else:
-                    print(f"Warning: {input_type} does not exist in {path.abspath(input_path)}.")
-    @staticmethod
-    def arg_check(args):
-        if isinstance(args, dict):
-            args = Args(args)
-        if isinstance(args, Args):
-            return args.args
-        elif isinstance(args, Namespace):
-            return args
-        else:
-            return None
-
 class Lattice:
-    def __init__(self):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self.__first_flag, self.__NpT_flag = False, False
         self.__firstLattice = []
     @property
@@ -1477,9 +1489,9 @@ class Lattice:
             self._lattice.append(array(lattice))
 
 class Graph(Position, Periodic):
-    def __init__(self, input_obj=None):
-        Position.__init__(self, input_obj)
-        Periodic.__init__(self, input_obj)
+    def __init__(self, input_obj=None, **kwargs):
+        super().__init__(input_obj=input_obj, **kwargs)
+        self.defaultdict = defaultdict
         self._dist_mat = None
         self._adj_mat = None
         self._UnupdatedBondList = []
@@ -1494,11 +1506,8 @@ class Graph(Position, Periodic):
                                      [1, -1, -1], [-1, 1, -1], [-1, -1, -1]])
         if hasattr(input_obj, "bridge"):
             self.bridge = input_obj
-        from kit.accelerate import distance_matrix_wrap, distance_matrix
-        self.distance_matrix_wrap, self.distance_matrix_func = distance_matrix_wrap, distance_matrix
-    @property
-    def atom_step(self):
-        return self._AtomStep
+        from kit.accelerate import distance_matrix_cutoff, distance_matrix
+        self.distance_matrix_cutoff, self.distance_matrix_func = distance_matrix_cutoff, distance_matrix
     @property
     def bridge(self):
         pass
@@ -1513,11 +1522,11 @@ class Graph(Position, Periodic):
         return self._adj_mat
     @property
     def adjacent_list(self):
-        return self._AdjList
+        return self._adj_list
     @property
     def molecules(self):
         return self._AtomStep.molecules
-    @atom_step.setter
+    @Fundamental.atom_step.setter
     def atom_step(self, atom_step):
         if isinstance(atom_step, AtomStep_Trj) or isinstance(atom_step, AtomStep_Single_Point):
             self._AtomStep = atom_step
@@ -1526,9 +1535,10 @@ class Graph(Position, Periodic):
             raise ValueError("'atom_step' should be ' 'AtomStep_Trj' or 'AtomStep_Single_Point'.")
     @bridge.setter
     def bridge(self, software):
-        self.args, self.atom_step = software.args, software.atom_step
-        if hasattr(self._args, "molecules") and self._AtomStep.molecules.molecule_dictionary != {}:
-            self.read_molecules(self._args.molecules)
+        self.args, self.elements, self.atom_step = software.args, software.elements, software.atom_step
+        if hasattr(self._args, "molecules") and self._args.molecules is not None and self._AtomStep.molecules.molecule_dictionary != {}:
+            if path.isfile(self._args.molecules):
+                self.read_molecules(self._args.molecules)
     @period_images.setter
     def period_images(self, period_images):
         self._period_images = array(period_images)
@@ -1544,8 +1554,8 @@ class Graph(Position, Periodic):
         self._adj_mat = adj_mat
     @adjacent_list.setter
     def adjacent_list(self, adjList):
-        if isinstance(self._AdjList, list):
-            self._AdjList = adjList
+        if isinstance(self._adj_list, list):
+            self._adj_list = adjList
         else:
             raise ValueError("'adjacent_list' should be a dictionary.")
     @molecules.setter
@@ -1557,7 +1567,7 @@ class Graph(Position, Periodic):
         graph = self._adj_mat if graph is None and isinstance(self._adj_mat, ndarray) else graph
         mole_dict = self._AtomStep.molecules.molecule_dictionary if molecule_dictionary is None and isinstance(self._AtomStep.molecules.molecule_dictionary, dict) else molecule_dictionary
         mole_pos = self._AtomStep.molecules.molecule_position if molecule_position is None and isinstance(self._AtomStep.molecules.molecule_position, dict) else molecule_position
-        atoms = self._AtomStep.atom_list
+        atoms = self._AtomStep.atoms.get()
         mol_num = 0
         for i, j in zip(*np.where(graph > 0)):
             new_id, searched_id = [], []
@@ -1589,17 +1599,17 @@ class Graph(Position, Periodic):
                 mole_dict[mol_num].append(atom)
                 mol_num += 1
         positions = self._AtomStep.fractional_position
+        atom_dict = self._AtomStep.atoms.index_list
         for mol_num, molecule in mole_dict.items():
             molecule.sort()
-            atoms_idx = self._AtomStep.atoms.index_list
             if isinstance(mole_pos[mol_num], list) and mole_pos[mol_num] == []:
                 if positions.ndim == 2:
                     for atom in molecule:
-                        mole_pos[mol_num].append(positions[atoms_idx[atom]])
+                        mole_pos[mol_num].append(positions[atom_dict[atom]])
                     mole_pos[mol_num] = array(mole_pos[mol_num])
                 elif positions.ndim == 3:
                     for atom in molecule:
-                        mole_pos[mol_num].append(positions[:, atoms_idx[atom]])
+                        mole_pos[mol_num].append(positions[:, atom_dict[atom]])
                     mole_pos[mol_num] = array(mole_pos[mol_num]).transpose((1, 0, 2))
         if wrap:
             self._AtomStep.molecules.fractional_flag = True
@@ -1608,6 +1618,8 @@ class Graph(Position, Periodic):
     def build_graph(self, wrap=True, molecule=True):
         elements = self._AtomStep.atoms.elements
         self._adj_mat = np.zeros((len(elements), len(elements)))
+        if self._AtomStep.molecules.threshold == {}:
+            self._AtomStep.molecules.build_threshold()
         if molecule:
             if self._AtomStep.molecules.molecule_position == {}:
                 self._AtomStep.build_molecule_position()
@@ -1619,22 +1631,22 @@ class Graph(Position, Periodic):
             else:
                 self._dist_mat = np.zeros((positions.shape[0], positions.shape[0]))
                 for idx, position in enumerate(positions):
-                    self._dist_mat[idx] = self.distance_matrix_wrap(position[np.newaxis, :], positions, self._AtomStep.lattice, self._wrap).min(axis=2) if wrap else self.distance_matrix_func(position[np.newaxis, :], positions, self._AtomStep.lattice)
-            self._adj_mat, self._AdjList = self.build_graph_from_distance_matrix(self._dist_mat)
+                    self._dist_mat[idx] = self.distance_matrix_cutoff(position[np.newaxis, :], positions, self._AtomStep.lattice, self._period_images, max(self._AtomStep.molecules.threshold.values()), True)[0] if wrap else self.distance_matrix_func(position[np.newaxis, :], positions, self._AtomStep.lattice)
+            self._adj_mat, self._adj_list = self.build_graph_from_distance_matrix(self._dist_mat)
     def build_distance_matrix(self, wrap=True):
         position = self._AtomStep.fractional_position if self._AtomStep.fractional_position.ndim == 2 else self._AtomStep.fractional_position[0]
         if wrap:
-            return self.distance_matrix_wrap(position, position, self._AtomStep.lattice, self._period_images)
+            return self.distance_matrix_cutoff(position, position, self._AtomStep.lattice, self._period_images, max(self._AtomStep.molecules.threshold.values()), True)[0]
         else:
             return self.distance_matrix_func(position, position, self._AtomStep.lattice)
     def molecule_distance_matrix(self):
         atoms_idx = self._AtomStep.atoms.index_list
         elements = self._AtomStep.atoms.elements
-        for mole_num, MolePos in self._AtomStep.molecules.molecule_position.items():
-            if len(MolePos) == 1:
+        for mole_num, mole_pos in self._AtomStep.molecules.molecule_position.items():
+            if len(mole_pos) == 1:
                 continue
             mole_dict = self._AtomStep.molecules.molecule_dictionary[mole_num]
-            position = MolePos if MolePos.ndim == 2 else MolePos[0]
+            position = mole_pos if mole_pos.ndim == 2 else mole_pos[0]
             dist_mat = self.distance_matrix_func(position, position, self._AtomStep.lattice)
             for i, j in zip(*np.where((dist_mat < max(self._AtomStep.molecules.threshold.values())) & (dist_mat > 0.01))):
                 atom_idx_i, atom_idx_j = atoms_idx[mole_dict[i]], atoms_idx[mole_dict[j]]
@@ -1691,17 +1703,18 @@ class Graph(Position, Periodic):
         return adj_mat
     def matrix_to_list(self, adjacent_matrix=None):
         adj_mat = adjacent_matrix if adjacent_matrix is not None and isinstance(adjacent_matrix, ndarray) else self._adj_mat
-        AdjList = defaultdict(list)
+        adj_list = defaultdict(list)
+        atom_list = self._AtomStep.atoms.get()
         for i, j in zip(*np.where(adj_mat > 0)):
-            atom_i, atom_j = self._AtomStep.atom_list[i], self._AtomStep.atom_list[j]
-            AdjList[atom_i].append([atom_j, adj_mat[i, j]])
-            AdjList[atom_j].append([atom_i, adj_mat[j, i]])
-        return AdjList
+            atom_i, atom_j = atom_list[i], atom_list[j]
+            adj_list[atom_i].append([atom_j, adj_mat[i, j]])
+            adj_list[atom_j].append([atom_i, adj_mat[j, i]])
+        return adj_list
     def list_to_matrix(self, adjacent_list=None):
-        AdjList = adjacent_list if adjacent_list is not None and isinstance(adjacent_list, dict) else self._AdjList
+        adj_list = adjacent_list if adjacent_list is not None and isinstance(adjacent_list, dict) else self._adj_list
         adj_mat = np.zeros((len(self._AtomStep.atoms.get()), len(self._AtomStep.atoms.get())))
         atoms_idx = self._AtomStep.atoms.index_list
-        for cen_atom, mea_atoms in AdjList.items():
+        for cen_atom, mea_atoms in adj_list.items():
             cen_atom_idx = atoms_idx[cen_atom]
             for mea_atom, bond_length in mea_atoms:
                 mea_atom_idx = atoms_idx[mea_atom]
@@ -1756,16 +1769,17 @@ class Graph(Position, Periodic):
         atom1_idx, atom2_idx = self._AtomStep.atoms.index_list[atom1], self._AtomStep.atoms.index_list[atom2]
         searched = []
         mole_list = self.walking(atom1_idx, graph)
-        searched.append(sorted([self._AtomStep.atom_list[atom] for atom in mole_list]))
+        atom_list = self._AtomStep.atoms.get()
+        searched.append(sorted([atom_list[atom] for atom in mole_list]))
         if atom2 not in searched[0]:
             mole_list = self.walking(atom2_idx, graph)
-            searched.append(sorted([self._AtomStep.atom_list[atom] for atom in mole_list]))
+            searched.append(sorted([atom_list[atom] for atom in mole_list]))
         if molecule is not None:
             tmp = [self._AtomStep.atoms.index_list[atom] for atom in molecule if atom not in searched[0] and atom not in searched[1]]
             while(tmp != []):
                 atom = tmp.pop(0)
                 mole_list = self.walking(atom, graph)
-                searched.append(sorted([self._AtomStep.atom_list[atom] for atom in mole_list]))
+                searched.append(sorted([atom_list[atom] for atom in mole_list]))
                 for atom in mole_list:
                     if atom in tmp:
                         tmp.remove(atom)
@@ -1774,19 +1788,19 @@ class Graph(Position, Periodic):
     def walking(index, graph):
         new, mole_list = [index], []
         while(new != []):
-            atom = new.pop(0)
+            atom = new.pop()
             if atom not in mole_list:
                 mole_list.append(atom)
-            connected_atom = list(np.where(graph[atom])[0])
-            new.extend([atom for atom in connected_atom if atom not in mole_list])
+            connected_atoms = list(np.where(graph[atom])[0])
+            new.extend([connected_atom for connected_atom in connected_atoms if connected_atom not in mole_list])
         return mole_list
     @staticmethod
     def walking_list(index, graph):
         new, mole_list = [index], []
         while(new != []):
-            atom = new.pop(0)
+            atom = new.pop()
             if atom not in mole_list:
                 mole_list.append(atom)
-            connected_atom = list(atom2 for atom2 in graph[atom].keys() if graph[atom][atom2])
-            new.extend([atom for atom in connected_atom if atom not in mole_list])
+            connected_atoms = list(atom2 for atom2 in graph[atom].keys() if graph[atom][atom2])
+            new.extend([connected_atom for connected_atom in connected_atoms if connected_atom not in mole_list])
         return mole_list
