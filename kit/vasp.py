@@ -1,13 +1,14 @@
-from os import getcwd
 from numpy import zeros, array
 from kit.fundamental import *
 
 class POSCAR(Single_Point):
-    def __init__(self, args=None, atoms=None):
-        Single_Point.__init__(self, args, atoms)
-        if hasattr(self, "_args") and hasattr(self._args, "input") and ("POSCAR" in self._args.input or "CONTCAR" in self._args.input):
+    def __init__(self, args=None, atoms=None, **kwargs):
+        super().__init__(input_obj=args, atoms=atoms, **kwargs)
+        if hasattr(self, "_args") and hasattr(self._args, "input") and (self._args.input == "POSCAR" or self._args.input == "CONTCAR"):
             self.read_elements()
         self._relax_flag = False
+        if hasattr(args, "bridge"):
+            self.bridge = args
     @property
     def bridge(self):
         pass
@@ -24,11 +25,9 @@ class POSCAR(Single_Point):
                     elements = line.split()
                 elif row == 7:
                     numbers = [int(num) for num in line.split()]
-                    self._AtomStep.atoms.elements = Convert.eleNum2elements(elements, numbers)
-                    for _ in range(len(self._AtomStep.atoms.elements)):
-                        self._AtomStep.atoms_info[_]["element"] = self._AtomStep.atoms.elements[_]
-                    self._AtomStep.molecules.elements = self._AtomStep.atoms.elements
-                    return self._AtomStep.atoms.elements
+                    self._AtomStep.molecules.elements = Convert.eleNum2elements(elements, numbers)
+                    self._elements = tuple(self._AtomStep.molecules.elements)
+                    return self._elements
     def rearrange(self, elements, positions, num=None, typ='f'):
         from collections import defaultdict
         assert len(elements) == len(positions), "Lengths of elements and AtomStep should be equal."
@@ -43,8 +42,6 @@ class POSCAR(Single_Point):
         if num is None:
             atom_sum = len(self._AtomStep.atoms.elements)
             num = range(atom_sum)
-        for atom in num:
-            self._AtomStep.atoms_info[atom]["element"] = self._AtomStep.atoms.elements[atom]
         positions = []
         atom = 0
         for element in tmp.keys():
@@ -63,7 +60,8 @@ class POSCAR(Single_Point):
             self.atoms.put(atoms)
         else:
             self.atoms = atoms
-        atoms = (atoms if atoms == "all" else self._AtomStep.atom_list)
+        atoms = (atoms if atoms == "all" else atoms.get())
+        atoms_dict = {atom: atom in self.atoms.get() for atom in range(len(self._elements))}
         with open(self._args.input) as read_file:
             row = 0
             for line in read_file:
@@ -73,30 +71,18 @@ class POSCAR(Single_Point):
                     if "direct" in line.lower():
                         self._AtomStep.fractional_flag, self._AtomStep.cartesian_flag = True, False
                         self._AtomStep.bridge = self
-                        self._relaxBorder = 0
                     elif "cartesian" in line.lower():
                         self._AtomStep.cartesian_flag, self._AtomStep.fractional_flag = True, False
                         self._AtomStep.bridge = self
-                        self._relaxBorder = [0, 0, 0]
                     for atom in range(atom_sum):
                         sp = next(read_file).split()
                         row += 1
-                        if (atoms == "all" or atom in atoms):
+                        if atoms_dict[atom]:
                             self._AtomStep.put([float(_) for _ in sp[:3]], atom)
-                        if self._AtomStep.fractional_flag:
                             if len(sp) > 3:
                                 self._relax_flag = True
-                                if sp[5] == "F" and float(sp[2]) > self._relax_border:
-                                    self._relax_border = float(sp[2])
-                        elif self._AtomStep.cartesian_flag:
-                            if len(sp) > 3:
-                                self._relax_flag = True
-                                if sp[5] == "T" and float(sp[2]) > self._relax_border[2]:
-                                    self._relax_border = [float(_) for _ in sp[:3]]
+                                self._relax_border.append(f"{sp[3]}{sp[4]}{sp[5]}")
                     self._AtomStep.lock()
-                    if self._AtomStep.cartesian_flag and self._relax_flag:
-                        from numpy import linalg
-                        self._relax_border = array(self._relax_border).dot(linalg.inv(self._lattice))[2]
                 elif row < 9:
                     row += 1
                     self._title = line.replace('\n', '')
@@ -116,12 +102,12 @@ class POSCAR(Single_Point):
                     row += 1
                     elements = line.split()
                     line = next(read_file)
-                    self._AtomStep.atoms.elements = Convert.eleNum2elements(elements, [int(_) for _ in line.split()])
+                    self._elements = tuple(Convert.eleNum2elements(elements, [int(_) for _ in line.split()]))
                     row += 1
-                    atom_sum = len(self._AtomStep.atoms.elements)
-                    for _ in range(atom_sum):
-                        self._AtomStep.atoms_info[_]["element"] = self._AtomStep.atoms.elements[_]
+                    atom_sum = len(self._elements)
                     self._AtomStep.bridge = self
+                    if atoms != "all":
+                        self._AtomStep.atoms.elements = [self._elements[atom] for atom in atoms]
     def read_fast(self, atoms="all"):
         if atoms == "all":
             self.atoms.bridge = self
@@ -135,16 +121,16 @@ class POSCAR(Single_Point):
                 if "direct" in line.lower() or "cartesian" in line.lower():
                     if "direct" in line.lower():
                         self._AtomStep.fractional_flag, self._AtomStep.cartesian_flag = True, False
-                        self._AtomStep.bridge = self
-                        self._relax_border = 0
                     elif "cartesian" in line.lower():
                         self._AtomStep.cartesian_flag, self._AtomStep.fractional_flag = True, False
-                        self._AtomStep.bridge = self
-                        self._relax_border = [0, 0, 0]
+                    self._AtomStep.bridge = self
                     for atom in range(atom_sum):
                         sp = next(read_file).split()
                         if (atoms == "all" or atom in atoms):
-                            self._AtomStep.fast_append(atom, [_ for _ in sp])
+                            self._AtomStep.fast_append([_ for _ in sp[:3]], atom)
+                            if len(sp) > 3:
+                                self._relax_flag = True
+                                self._relax_border.append(f"{sp[4]}{sp[5]}{sp[6]}")
                     self._AtomStep.fast_step()
                     if self._AtomStep.cartesian_flag and self._relax_flag:
                         from numpy import linalg
@@ -154,21 +140,24 @@ class POSCAR(Single_Point):
                     
                     line = next(read_file)
                     scale = float(line.split()[0])
-                    arr = zeros((3, 3))
+                    lattice_mat = zeros((3, 3))
                     
                     for _ in range(3):
                         line = next(read_file)
-                        arr[_] = [scale*self._scaling*float(_) for _ in line.split()]
-                    self._AtomStep.lattice = arr
+                        lattice_mat[_] = [scale*self._scaling*float(_) for _ in line.split()]
+                    self._AtomStep.lattice = lattice_mat
                     
                     line = next(read_file)
                     elements = line.split()
                     line = next(read_file)
-                    self._AtomStep.atoms.elements = Convert.eleNum2elements(elements, [int(_) for _ in line.split()])
-                    atom_sum = len(self._AtomStep.atoms.elements)
-                    for _ in range(atom_sum):
-                        self._AtomStep.atoms_info[_]["element"] = self._AtomStep.atoms.elements[_]
+                    self._elements = tuple(Convert.eleNum2elements(elements, [int(_) for _ in line.split()]))
+                    atom_sum = len(self._elements)
                     self._AtomStep.bridge = self
+                    if atoms == "all":
+                        self._AtomStep.atoms.elements = self._elements
+                    else:
+                        self._AtomStep.atoms.elements = [self._elements[atom] for atom in atoms]
+                    self._AtomStep.atoms.read_elements()
                     
                     line = next(read_file)
                     if "selective" in line.lower():
@@ -193,7 +182,7 @@ class POSCAR(Single_Point):
             write_file.write("\n")
             for element in element_order:
                 write_file.write(f"     {eleNum[element]}")
-            atom_sum = len(elements)
+            atom_sum = len(self._AtomStep.atoms.elements)
             write_file.write("\n")
             if self._relax_flag:
                 write_file.write("Selective dynamics\n")
@@ -204,11 +193,11 @@ class POSCAR(Single_Point):
             for idx in range(atom_sum):
                 write_file.write(f"    {position[idx][0]:.8f}\t{position[idx][1]:.8f}\t{position[idx][2]:.8f}\t")
                 if self._relax_flag and isinstance(self._relax_border, list):
-                    for _ in range(len(self._relax_border[idx])):
-                        write_file.write(f" {('T' if self._relax_border[idx][_] == 'T' else 'F')}")
+                    write_file.write(f" {self._relax_border[idx][0]} {self._relax_border[idx][1]} {self._relax_border[idx][2]}\n")
                 elif self._relax_flag and isinstance(self._relax_border, float):
-                    write_file.write((" F F F" if frac_pos[idx][2] <= self._relax_border else " T T T"))
-                write_file.write('\n')
+                    write_file.write((" F F F\n" if frac_pos[idx][2] <= self._relax_border else " T T T\n"))
+                elif not self._relax_flag:
+                    write_file.write("\n")
     def write_fast(self, typ='f'):
         lattice = self._scaling*self._AtomStep.lattice
         elements = self._AtomStep.atoms.elements
@@ -248,18 +237,18 @@ class POSCAR(Single_Point):
                 write_file.write('\n')
 
 class XDATCAR(Position, Periodic, Trajectory):
-    def __init__(self, args=None, steps=None, atoms=None):
-        Position.__init__(self, args)
-        Periodic.__init__(self, args)
-        Trajectory.__init__(self, args, steps, atoms)
+    def __init__(self, args=None, steps=None, atoms=None, **kwargs):
+        super().__init__(input_obj=args, steps=steps, atoms=atoms, **kwargs)
         if hasattr(self, "_args") and hasattr(self._args, "input") and "XDATCAR" in self._args.input:
             self.read_elements()
+        if hasattr(args, "bridge"):
+            self.bridge = args
     @property
     def bridge(self):
         pass
     @bridge.setter
     def bridge(self, software):
-        self.args, self.title, self._AtomStep = software.args, software.title, software._AtomStep
+        self.args, self.title, self.elements, self.atom_step = software.args, software.title, software.elements, software._AtomStep
     def read_elements(self):
         from os import popen
         with popen(f"head {self._args.input}") as command:
@@ -268,11 +257,9 @@ class XDATCAR(Position, Periodic, Trajectory):
                     elements = line.split()
                 elif row == 7:
                     numbers = [int(num) for num in line.split()]
-                    self._AtomStep.atoms.elements = Convert.eleNum2elements(elements, numbers)
-                    for _ in range(len(self._AtomStep.atoms.elements)):
-                        self._AtomStep.atoms_info[_]["element"] = self._AtomStep.atoms.elements[_]
-                    self._AtomStep.molecules.elements = self._AtomStep.atoms.elements
-                    return self._AtomStep.atoms.elements
+                    self._AtomStep.molecules.elements = Convert.eleNum2elements(elements, numbers)
+                    self._elements = tuple(self._AtomStep.molecules.elements)
+                    return self._elements
     def read_fast(self, steps="all", atoms="all"):
         if atoms == "all":
             self.atoms.bridge = self
@@ -293,29 +280,29 @@ class XDATCAR(Position, Periodic, Trajectory):
             atom = -1
             for line in read_file:
                 if "Direct configuration" in line:
-                    self._stepCounter += 1
-                    if not (steps == "all" or self._stepCounter in steps):
+                    self._step_counter += 1
+                    if not (steps == "all" or self._step_counter in steps):
                         for _ in range(atom_sum):
                             line = next(read_file)
                     else:
                         for atom in range(atom_sum):
                             line = next(read_file)
                             if (atoms == "all" or atom in atoms):
-                                self._AtomStep.fast_append(atom, [_ for _ in line.split()])
+                                self._AtomStep.fast_append([_ for _ in line.split()], atom)
                         self._AtomStep.fast_step()
                 else:
                     row = 0
                     while(1):
                         if row == 0:
-                            if self._stepCounter == 0 and self._title == line:
-                                self._AtomStep.lattice.NpT_flag = True
-                            elif self._stepCounter == 0:
+                            if self._step_counter == 0 and self._title == line:
+                                self._AtomStep.Lattice.NpT_flag = True
+                            elif self._step_counter == 0:
                                 self._title = line
                             line = next(read_file)
                             row += 1
                         elif row == 1:
                             scale = float(line.split()[0])
-                            if (steps == "all" or self._stepCounter in steps or self._stepCounter == 0):
+                            if (steps == "all" or self._step_counter in steps or self._step_counter == 0):
                                 arr = zeros((3, 3))
                                 for i in range(3):
                                     line = next(read_file)
@@ -327,14 +314,14 @@ class XDATCAR(Position, Periodic, Trajectory):
                                     line = next(read_file)
                                     row += 1
                             line = next(read_file)
-                        elif row == 4 and self._stepCounter == 0:
+                        elif row == 4 and self._step_counter == 0:
                             elements = line.split()
                             line = next(read_file)
                             row += 1
-                            self._AtomStep.atoms.elements = Convert.eleNum2elements(elements, [int(_) for _ in line.split()])
-                            atom_sum = len(self._AtomStep.atoms.elements)
-                            for _ in range(atom_sum):
-                                self._AtomStep.atoms_info[_]["element"] = self._AtomStep.atoms.elements[_]
+                            self._elements = tuple(Convert.eleNum2elements(elements, [int(_) for _ in line.split()]))
+                            atom_sum = len(self._elements)
+                            if atoms != "all":
+                                self._AtomStep.atoms.elements = [self._AtomStep.atoms.elements[atom] for atom in atoms]
                             self._AtomStep.fractional_flag, self._AtomStep.cartesian_flag = True, False
                             self._AtomStep.bridge = self
                             break
@@ -344,7 +331,8 @@ class XDATCAR(Position, Periodic, Trajectory):
             self.atoms.put(atoms)
         else:
             self.atoms = atoms
-        atoms = (atoms if atoms == "all" else self._AtomStep.atom_list)
+        atoms = (atoms if atoms == "all" else atoms.get())
+        atoms_dict = {atom: atom in self.atoms.get() for atom in range(len(self._elements))}
         if steps == "all":
             self.steps.bridge = self
             self.steps.put(steps)
@@ -355,36 +343,36 @@ class XDATCAR(Position, Periodic, Trajectory):
                 print("Completed steps:")
         steps = (steps if steps == "all" else self._AtomStep.steps.get(slice_flatten=True))
         if steps != "all":
-            StepsDict = {step: step in steps for step in range(1, self.steps.total_steps+1)}
+            steps_dict = {step: step in steps for step in range(1, self.steps.total_steps+1)}
         self._AtomStep.fractional_flag, self._AtomStep.cartesian_flag = True, False
         with open(self._args.input) as read_file:
             self._title = None
             for line in read_file:
                 if "Direct configuration" in line:
-                    self._stepCounter += 1
-                    if self._stepCounter % 1000 == 0:
-                        print(f"{self._stepCounter} / {self._cutoff_step if self._cutoff_step != -1 else self._AtomStep.steps.total_steps}")
-                    if not (steps == "all" or StepsDict[self._stepCounter]):
+                    self._step_counter += 1
+                    if self._step_counter % 1000 == 0:
+                        print(f"{self._step_counter} / {self._cutoff_step if self._cutoff_step != -1 else self.steps.total_steps}", flush=True)
+                    if not (steps == "all" or steps_dict[self._step_counter]):
                         for _ in range(atom_sum):
                             line = next(read_file)
                     else:
                         for atom in range(atom_sum):
                             line = next(read_file)
-                            if (atoms == "all" or AtomsDict[atom]):
+                            if atoms_dict[atom]:
                                 self._AtomStep.put([float(_) for _ in line.split()], atom)
                 else:
                     row = 0
                     while(1):
                         if row == 0:
-                            if self._stepCounter == 0 and self._title == line:
-                                self._AtomStep.lattice.NpT_flag = True
-                            elif self._stepCounter == 0:
+                            if self._step_counter == 0 and self._title == line:
+                                self._AtomStep.Lattice.NpT_flag = True
+                            elif self._step_counter == 0:
                                 self._title = line
                             line = next(read_file)
                             row += 1
                         elif row == 1:
                             scale = float(line.split()[0])
-                            if (steps == "all" or self._stepCounter in steps or self._stepCounter == 0):
+                            if (steps == "all" or self._step_counter in steps or self._step_counter == 0):
                                 arr = zeros((3, 3))
                                 for i in range(3):
                                     line = next(read_file)
@@ -396,26 +384,25 @@ class XDATCAR(Position, Periodic, Trajectory):
                                     line = next(read_file)
                                     row += 1
                             line = next(read_file)
-                        elif row == 4 and self._stepCounter == 0:
+                        elif row == 4 and self._step_counter == 0:
                             elements = line.split()
                             line = next(read_file)
                             row += 1
-                            self._AtomStep.atoms.elements = Convert.eleNum2elements(elements, [int(_) for _ in line.split()])
-                            atom_sum = len(self._AtomStep.atoms.elements)
-                            for _ in range(atom_sum):
-                                self._AtomStep.atoms_info[_]["element"] = self._AtomStep.atoms.elements[_]
+                            self._elements = tuple(Convert.eleNum2elements(elements, [int(_) for _ in line.split()]))
+                            atom_sum = len(self._elements)
                             if atoms != "all":
-                                AtomsDict = {atom: atom in atoms for atom in range(atom_sum)}
+                                self._AtomStep.atoms.elements = [self._elements[self._AtomStep.atoms.index_list[atom]] for atom in atoms]
+                                atoms_dict = {atom: atom in atoms for atom in range(atom_sum)}
                             self._AtomStep.fractional_flag, self._AtomStep.cartesian_flag = True, False
                             self._AtomStep.bridge = self
                             break
-                if (self._stepCounter-1) > self._cutoff_step and self._cutoff_step != -1:
+                if (self._step_counter-1) > self._cutoff_step and self._cutoff_step != -1:
                     break
             self._AtomStep.fractional_flag = True
             self._AtomStep.lock()
     def write_all(self):
         self._lattice = self._scaling*self._AtomStep.lattice
-        frac_pos = self._AtomStep.fractional_position.transpose((1, 0, 2))
+        frac_pos = self._AtomStep.fractional_position
         with open(self._args.output, "w") as write_file:
             flag = True
             for i in range(len(frac_pos)):
@@ -468,56 +455,50 @@ class XDATCAR(Position, Periodic, Trajectory):
                     write_file.write(f"    {frac_pos[i][j][0]}\t{frac_pos[i][j][1]}\t{frac_pos[i][j][2]}\n")
 
 class ACF(Fundamental, Charge):
-    def __init__(self, input_obj, atoms=None):
-        Fundamental.__init__(self, input_obj)
+    def __init__(self, input_obj=None, atoms=None, **kwargs):
+        super().__init__(input_obj=input_obj, atoms=atoms, **kwargs)
         Charge.__init__(self)
         if hasattr(input_obj, "bridge"):
-            self.bridge = input_obj.bridge
+            self.bridge = input_obj
         self._AtomStep = AtomStep_Single_Point(input_obj, atoms)
     @property
     def bridge(self):
         pass
-    @property
-    def diff(self):
-        self.read_ref()
-        ref = [self._ref[self._elements[atom]] for atom in self.atoms.get()]
-        return self._charge - array(ref)
     @bridge.setter
     def bridge(self, software):
         self.args, self.elements, self.reference = software.args, software.elements, software.reference
     def read_elements(self):
         charge_edit = Charge_Edit(self._args)
-        charge_edit.read_elements()
-        self._elements = charge_edit.elements
+        self._AtomStep.elements = charge_edit.read_elements()
+        self._elements = tuple(charge_edit.elements)
     def read_ref(self):
         charge_edit = Charge_Edit(self._args)
-        charge_edit.read_ref()
-        self._ref = charge_edit.reference
-    def read_all(self, file):
-        if path.isfile(path.join(file, "ACF.dat")):
-            file = path.join(file, "ACF.dat")
-        with open(file) as read_file:
-            row = 0
-            for line in read_file:
-                row += 1
-                if row > 2 and row < len(self._AtomStep.atoms.elements)+3:
-                    self._charge.append(-float(line.split()[4]))
-        self._charge = array(self._charge)
-    def read_atom(self, file):
-        if path.isfile(path.join(file, "ACF.dat")):
-            file = path.join(file, "ACF.dat")
-        with open(file) as read_file:
-            tmp = []
+        self._ref = charge_edit.read_ref()
+    def read_all(self, atoms="all"):
+        if atoms == "all":
+            self.atoms.bridge = self
+            self.atoms.put(atoms)
+        else:
+            self.atoms = atoms
+        self.read_ref()
+        with open(self._args.input) as read_file:
             row = 0
             for line in read_file:
                 row += 1
                 if row > 2 and row-3 in self.atoms.get():
-                    tmp.append(-float(line.split()[4]))
-        self._charge = tmp
+                    self._charge.append(-float(line.split()[4]))
+        self._charge = array(self._charge)
+        self._diff = self._charge - array([self._ref[self._elements[atom]] for atom in self.atoms.get()])
+    def write_all(self):
+        atom_list = self._AtomStep.atom_list
+        with open(self._args.output+".csv", "a+") as write_file:
+            write_file.write(",sum" + "".join([f",{i+self._args.atom}" for i in atom_list]) + '\n')
+            write_file.write("ref,0" + "".join([f",{self._ref[self._elements[atom]]}" for atom in atom_list]) + '\n')
+            write_file.write(f"charges,{sum(self._diff):.4f}" + "".join([f",{charge:.4f}" for charge in self._diff]) + '\n\n')
 
 class ACFs(Trajectory, Charge):
-    def __init__(self, input_obj, steps=None, atoms=None):
-        Trajectory.__init__(self, input_obj, steps=steps, atoms=atoms)
+    def __init__(self, input_obj=None, steps=None, atoms=None, **kwargs):
+        super().__init__(input_obj=input_obj, steps=steps, atoms=atoms, **kwargs)
         Charge.__init__(self)
         if hasattr(input_obj, "bridge"):
             self.bridge = input_obj
@@ -531,23 +512,19 @@ class ACFs(Trajectory, Charge):
         self.args, self.atom_step, self.reference = software.args, software.atom_step, software.reference
     def read_elements(self):
         charge_edit = Charge_Edit(self._args)
-        charge_edit.read_elements()
-        self._AtomStep.elements = charge_edit.elements
+        self._AtomStep.elements = charge_edit.read_elements()
+        self._elements = tuple(self._AtomStep.elements)
     def read_ref(self):
         charge_edit = Charge_Edit(self._args)
-        charge_edit.read_ref()
-        self._ref = charge_edit.reference
-    def read_all(self, diff_file="Charge_Diff"):
-        from etc import read_csv
-        if path.splitext(diff_file)[1] == "":
-            diff_file += ".csv"
-        self._diff, steps = read_csv(path.join(self._args.input, diff_file), num_flag=True)
-        for step in steps:
-            self._AtomStep.steps.put(step)
-    def read_atom(self, atoms=None, diff_file="Charge_Diff"):
+        self._ref = charge_edit.read_ref()
+    def read_all(self, atoms="all", diff_file="Charge_Diff"):
+        if atoms == "all":
+            self.atoms.bridge = self
+            self.atoms.put(atoms)
+        else:
+            self.atoms = atoms
         diff = defaultdict(list)
-        self.atoms = atoms
-        atom_list = atoms.get()
+        atom_list = self._AtomStep.atoms.get()
         if path.splitext(diff_file)[1] == "":
             diff_file += ".csv"
         steps = []
@@ -565,43 +542,36 @@ class ACFs(Trajectory, Charge):
             self._diff.append(diff[atom])
         self._diff = array(self._diff).T
     def write_all(self):
-        atom_list = self.atoms.get()
-        with open(path.join(getcwd(), f"{self._args.output}.csv"), "a+") as write_file:
-            for atom in atom_list:
-                write_file.write(f",{atom+self._args.atom}")
-            write_file.write(",sum\n")
-            write_file.write("ref")
-            for atom in atom_list:
-                write_file.write(f",{self._ref[self._AtomStep.elements[atom]]}")
-            write_file.write(",0\n")
+        atom_list = self._AtomStep.atoms.get()
+        with open(f"{self._args.output}.csv", "a+") as write_file:
+            write_file.write(",sum" + "".join([f",{atom+self._args.atom}" for atom in atom_list]) + "\n")
+            write_file.write("ref,0" + "".join([f",{self._ref[self._AtomStep.elements[atom]]}" for atom in atom_list]) + "\n")
             for idx, step in enumerate(self._AtomStep.steps.get()):
                 tmp = []
-                write_file.write(f"{step}")
                 for _ in range(len(atom_list)):
                     tmp.append(self._diff[idx][_])
+                write_file.write(f"{step},{sum(tmp):.4f}")
+                for _ in range(len(atom_list)):
                     write_file.write(f",{self._diff[idx][_]}")
-                write_file.write(f",{sum(tmp):.4f}\n")
+                write_file.write('\n')
             write_file.write('\n')
 
 class Charge_Edit(Trajectory, Charge):
-    def __init__(self, input_obj, steps=None, atoms=None):
-        Trajectory.__init__(self, input_obj, steps, atoms)
+    def __init__(self, input_obj=None, steps=None, atoms=None, **kwargs):
+        super().__init__(input_obj=input_obj, steps=steps, atoms=atoms, **kwargs)
         Charge.__init__(self)
         self._ref = {}
-        if hasattr(input_obj, "bridge"):
-            self.bridge = input_obj
-            if steps is not None:
-                self.steps = steps
-            if atoms is not None:
-                self.atoms = atoms
     def bridge(self):
         pass
     def read_elements(self):
+        from copy import deepcopy
         if path.isfile(path.join(self._args.input)):
             dir_name = path.dirname(self._args.input)
         elif path.isdir(path.join(self._args.input)):
             dir_name = self._args.input
         if not path.isfile(path.join(dir_name, "Atoms.txt")):
+            if self._args.poscar is None:
+                self._args.poscar = ""
             if path.isfile(self._args.poscar):
                 pass
             elif path.isfile(path.join(self._args.poscar, "POSCAR")):
@@ -612,22 +582,26 @@ class Charge_Edit(Trajectory, Charge):
                 self._args.poscar = path.join(self._args.poscar, "XDATCAR")
             else:
                 raise Exception("Provide information about elements or the numbers of them.")
-            tmp = self._args
-            tmp.input = self._args.poscar
-            poscar = POSCAR(tmp)
-            poscar.read_elements()
+            args = deepcopy(self._args)
+            args.input = self._args.poscar
+            poscar = POSCAR(args)
+            elements = poscar.read_elements()
             with open(path.join(dir_name, "Atoms.txt"), "w") as write_file:
-                for element in poscar.elements:
-                    write_file.write(f"{element} ")
+                for idx, element in enumerate(elements):
+                    write_file.write(f"{element}" if idx == len(elements)-1 else f"{element} ")
         read_file = open(path.join(dir_name, "Atoms.txt"))
         self._AtomStep.elements = read_file.readline().strip().split()
+        self._elements = tuple(self._AtomStep.elements)
         read_file.close()
+        return self._AtomStep.elements
     def read_ref(self):
         if path.isfile(path.join(self._args.input)):
             dir_name = path.dirname(self._args.input)
         elif path.isdir(path.join(self._args.input)):
             dir_name = self._args.input
         if not path.isfile(path.join(dir_name, "Ref.txt")):
+            if self._args.potcar is None:
+                self._args.potcar = ""
             if path.isfile(self._args.potcar):
                 pass
             elif path.isfile(path.join(self._args.potcar, "POTCAR")):
@@ -652,6 +626,7 @@ class Charge_Edit(Trajectory, Charge):
         with open(path.join(dir_name, "Ref.txt")) as read_file:
             for line in read_file:
                 self._ref[line.split()[0]] = -float(line.split()[1])
+        return self._ref
     def build(self):
         self.read_elements()
         self.read_ref()
@@ -668,8 +643,9 @@ class Charge_Edit(Trajectory, Charge):
                 continue
             if path.isfile(path.join(self._args.input, file, "ACF.dat")):
                 acf = ACF(self._args)
+                acf.args.input = path.join(self._args.input, file, "ACF.dat")
                 acf.elements = self._AtomStep.elements
-                acf.read_all(path.join(self._args.input, file, "ACF.dat"))
+                acf.read_all()
                 steps.append(int(file))
                 charges[int(file)] = acf.charge
             else:
