@@ -737,12 +737,9 @@ class Multiprocess(ABC):
                         write_file.write(line)
     def _dir_check(self):
         """Check and create directories if they do not exist."""
-        from os import mkdir
+        from os import makedirs
         for directory in ["done", "error", "wrong", "queue"]:
-            try:
-                mkdir(directory)
-            except:
-                continue
+            makedirs(directory, exist_ok=True)
 
 class Gaussian(Multiprocess):
     def __init__(self, file_list: list, **kwargs) -> None:
