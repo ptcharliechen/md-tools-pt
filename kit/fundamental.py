@@ -89,25 +89,26 @@ class Fundamental(ABC):
             filepath = None
         if hasattr(self._args, "molecules") and self._args.molecules is not None and not path.isfile(self._args.molecules):
             self._args.molecules = None
-        if filepath is None and not hasattr(self._args, "molecules"):
-            raise ValueError("'molecules' argument does not exist.")
-        elif filepath is None and self._args.molecules is None:
-            while(1):
-                filepath = input("Input the molecules file path: ")
-                if path.isfile(filepath):
-                    with open(filepath) as read_file:
-                        for row in read_file:
-                            row = row.replace('\n', '')
-                            if fullmatch(r"mol [a-zA-Z0-9]+", row) is None and fullmatch(r"\d+(\,\d+)*", row) is None:
-                                print("Warning: Format of the molecules file is wrong.")
+        if filepath is None:
+            if not hasattr(self._args, "molecules"):
+                raise ValueError("'molecules' argument does not exist.")
+            elif self._args.molecules is None:
+                while(1):
+                    filepath = input("Input the molecules file path: ")
+                    if path.isfile(filepath):
+                        with open(filepath) as read_file:
+                            for row in read_file:
+                                row = row.replace('\n', '')
+                                if fullmatch(r"mol [a-zA-Z0-9]+", row) is None and fullmatch(r"\d+(\,\d+)*", row) is None:
+                                    print("Warning: Format of the molecules file is wrong.")
+                                    break
+                            else:
+                                self._args.molecules = filepath
                                 break
-                        else:
-                            self._args.molecules = filepath
-                            break
-                else:
-                    print("Warning: File not found.")
-        elif filepath is None:
-            filepath = self._args.molecules
+                    else:
+                        print("Warning: File not found.")
+            else:
+                filepath = self._args.molecules
         
         self._AtomStep.molecules.read_molecules(filepath)
         
@@ -165,9 +166,9 @@ class Periodic(Fundamental):
 
 class Trajectory(Fundamental):
     def __init__(self, input_obj=None, steps=None, atoms=None, **kwargs):
-        super().__init__(input_obj=input_obj, steps=steps, atoms=atoms, **kwargs)
         self._step_counter = 0
         self._cutoff_step = -1
+        super().__init__(input_obj=input_obj, steps=steps, atoms=atoms, **kwargs)
         self._title = "trajectory"
     @property
     def steps(self):
@@ -216,9 +217,9 @@ class Trajectory(Fundamental):
 
 class Single_Point(Periodic, Position):
     def __init__(self, input_obj=None, atoms=None, **kwargs):
-        super().__init__(input_obj=input_obj, atoms=atoms, **kwargs)
         self._relax_flag = False
         self._relax_border = []
+        super().__init__(input_obj=input_obj, atoms=atoms, **kwargs)
         self._AtomStep = self._create_atom_step(input_obj=input_obj, atoms=atoms, **kwargs)
     @property
     def relax(self):
@@ -263,8 +264,8 @@ class Single_Point(Periodic, Position):
 
 class Charge:
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
         self._charge, self._diff, self._ref = [], [], {}
+        super().__init__(**kwargs)
     @property
     def reference(self):
         return self._ref
@@ -368,17 +369,22 @@ class Step:
         if fullmatch(r"\-?\d+", str(input_steps)) is not None:
             input_steps = int(input_steps)
             if input_steps > self._total_steps:
+                return -2
+            elif input_steps < 0 and input_steps+self._total_steps+1 < 0:
                 return -3
             self._steps(input_steps)
-        elif fullmatch(r"\-?\d+:\-?\d+(:\-?\d+)?", str(input_steps)) is not None:
+        elif ':' in input_steps:
+            if fullmatch(r"\-?\d+:\-?\d+(:\-?\d+)?", str(input_steps)) is None:
+                return -4
             sp = [int(step) for step in input_steps.split(':')]
             if (len(sp) == 3 and int(sp[0]) > int(sp[2])) or (len(sp) == 2 and int(sp[0]) > int(sp[1])):
-                return -2
+                return -5
             elif min(sp) < 0 and min(sp)+self._total_steps+1 < 0:
-                return -4
-            elif max(sp) > self._total_steps:
                 return -3
-            self._interval(input_steps)
+            elif max(sp) > self._total_steps:
+                return -2
+            else:
+                self._interval(input_steps)
         elif isinstance(input_steps, slice):
             self.__steps.append(input_steps)
         elif isinstance(input_steps, Iterable) and not isinstance(input_steps, str):
@@ -430,32 +436,47 @@ class Step:
         self.__steps = sorted(self.__steps)
     @property
     def err_list(self):
-        return defaultdict(int, {-4: "Warning: The negative numbers are too small.", -3: "Warning: Above the total steps.", -2: "Warning: The start number should be less than the end number.", -1: "Warning: Input error."})
+        return defaultdict(int, {-5: "Warning: The start number should be less than the end number.", \
+                -4: "Warning: Two or three numbers separated by ':'.", \
+                -3: "Warning: The negative numbers are too small.", \
+                -2: "Warning: Above the total steps.", \
+                -1: "Warning: Input error."})
     def _steps(self, steps):
         if isinstance(steps, Iterable):
-            for step in steps:
-                if step < 0:
-                    self.__steps.append(step+self._total_steps-self._start+2)
+            for step in [_-self._start+1 for _ in steps]:
+                if steps > 0:
+                    self.__steps.append(step)
                 else:
-                    self.__steps.append(step-self._start+1)
+                    self.__steps.append(step+self._total_steps+1)
         elif isinstance(steps, int):
+            steps = steps - self._start + 1
             if steps > 0:
-                self.__steps.append(steps-self._start+1)
+                self.__steps.append(steps)
             else:
-                self.__steps.append(steps+self._total_steps-self._start+2)
+                self.__steps.append(steps+self._total_steps+1)
     def _interval(self, steps):
         step_range = steps.split(':')
+        if len(step_range) == 2:
+            step_range[0] = int(step_range[0]) + 1
+            step_range[1] = int(step_range[1]) + 2
+        elif len(step_range) == 3:
+            step_range[0] = int(step_range[0]) + 1
+            step_range[1] = int(step_range[1])
+            step_range[2] = int(step_range[2]) + 2
         if int(step_range[0]) < 0:
+            step_range[0] += self._total_steps
             if len(step_range) == 2:
-                step_range[0], step_range[1] = int(step_range[0])-self._start+self._total_steps+2, int(step_range[1])-self._start+self._total_steps+3
-            else:
-                step_range[0], step_range[1], step_range[2] = int(step_range[0])-self._start+self._total_steps+2, int(step_range[1]), int(step_range[2])-self._start+self._total_steps+3
+                step_range[1] += self._total_steps
+            elif len(step_range) == 3:
+                step_range[2] += self._total_steps
         else:
+            step_range[0] -= self._start
             if len(step_range) == 2:
-                step_range[0], step_range[1] = int(step_range[0])-self._start+1, int(step_range[1])-self._start+2
-            else:
-                step_range[0], step_range[1], step_range[2] = int(step_range[0])-self._start+1, int(step_range[1]), int(step_range[2])-self._start+2
-        self.__steps.extend(list(range(step_range[0], step_range[2], step_range[1])) if len(step_range) == 3 else list(range(step_range[0], step_range[1])))
+                step_range[1] -= self._start
+            elif len(step_range) == 3:
+                step_range[2] -= self._start
+        steps = list(range(step_range[0], step_range[2], step_range[1])) if len(step_range) == 3 else list(range(step_range[0], step_range[1]))
+        self.__steps.extend(steps)
 
 class Step_LAMMPS(Step):
     def __init__(self, input_obj=None, put_flag=False, **kwargs):
@@ -586,7 +607,9 @@ class Atom(Fundamental):
             self._atoms(input_atom_list.split('_'))
         elif isinstance(input_atom_list, str) and all([element in self._elements for element in input_atom_list.split("_")]):
             self._atom_kind(input_atom_list)
-        elif fullmatch(r"\-?\d+:\-?\d+(:\-?\d+)?", str(input_atom_list)) is not None:
+        elif ':' in input_atom_list:
+            if fullmatch(r"\-?\d+:\-?\d+(:\-?\d+)?", str(input_atom_list)) is None:
+                return -5
             sp = [int(atom)-self._start for atom in input_atom_list.split(':')]
             if (len(sp) == 3 and int(sp[0]) > int(sp[2])) or (len(sp) == 2 and int(sp[0]) > int(sp[1])):
                 return -2
@@ -594,7 +617,8 @@ class Atom(Fundamental):
                 return -4
             elif max(sp) > self._atom_num:
                 return -3
-            self._interval(input_atom_list)
+            else:
+                self._interval(input_atom_list)
         elif "_except_" in str(input_atom_list):
             original_atoms_str, except_atoms_str = input_atom_list.split("_except_")
             original_atoms, except_atoms = Atom(self._args), Atom(self._args)
@@ -615,12 +639,12 @@ class Atom(Fundamental):
             elif "mol" in str(input_atom_list).lower():
                 if self._molecules.molecule_dictionary == {}:
                     if not hasattr(self._args, "molecules"):
-                        return -5
+                        return -6
                     elif self._args.molecules is not None and path.isfile(self._args.molecules):
                         self._molecules.read_molecules(self._args.molecules)
                         self.read_atoms_info(self._args.molecules)
                     else:
-                        return -6
+                        return -7
                 return self._mol(input_atom_list)
             else:
                 return -1
@@ -660,18 +684,19 @@ class Atom(Fundamental):
         self._atom_list = sorted(self._atom_list)
     @property
     def err_list(self):
-        return defaultdict(int, {-7: "Warning: Can not match the molecule type.", \
-                -6: "Warning: The molecule file does not exist.", \
-                -5: "Warning: 'molecules' argument is not defined.", \
+        return defaultdict(int, {-8: "Warning: Can not match the molecule type.", \
+                -7: "Warning: The molecule file does not exist.", \
+                -6: "Warning: 'molecules' argument is not defined.", \
+                -5: "Warning: Two or three numbers separated by ':'.", \
                 -4: "Warning: The negative numbers are too small.", -3: "Warning: Above the total steps.", \
                 -2: "Warning: The start number should be less than the end number.", -1: "Warning: Input error."})
     def _atoms(self, atoms):
-        if isinstance(atoms, int) or (isinstance(atoms, str) and atoms.isdigit()):
+        if isinstance(atoms, int) or (isinstance(atoms, str) and fullmatch(r"-?\d+(\.\d+)?", str(atoms)) is not None):
             atoms = int(atoms)
             if atoms >= 0:
                 self._in_list_check(atoms-self._start)
             else:
-                self._in_list_check(atoms+self._atom_num-self._start)
+                self._in_list_check(atoms+self._atom_num)
         elif isinstance(atoms, Iterable) and not isinstance(atoms, str):
             for atom in atoms:
                 if int(atom) >= 0:
@@ -687,7 +712,6 @@ class Atom(Fundamental):
                 if kind.split('_')[0] == inp:
                     for atom in self._molecules.molecule_dictionary[i]:
                         self._in_list_check(atom)
-            return 0
         elif len(inp.split('_')) > 1 and f"{inp.split('_')[0]}_{inp.split('_')[1]}" in self._molecules.molecule_kind:
             if len(inp.split('_')) == 2:
                 for atom in self._molecules.molecule_dictionary[self._molecules.molecule_kind.index(inp)]:
@@ -697,7 +721,6 @@ class Atom(Fundamental):
                     for atom in self._molecules.molecule_dictionary[self._molecules.molecule_kind.index(f"{inp.split('_')[0]}_{inp.split('_')[1]}")]:
                         if element == self._elements[atom]:
                             self._in_list_check(atom)
-            return 0
         elif len([element in self._elements for element in inp.split('_')[1:]]) > 0 and all([element in self._elements for element in inp.split('_')[1:]]):
             for mol, kind in enumerate(self._molecules.molecule_kind):
                 if inp.split('_')[0] == kind.split('_')[0]:
@@ -705,26 +728,32 @@ class Atom(Fundamental):
                         for atom in self._molecules.molecule_dictionary[mol]:
                             if element == self._elements[atom]:
                                 self._in_list_check(atom)
-            return 0
         else:
-            return -7
+            return -8
+        return 0
     def _interval(self, inp):
         atom_range = inp.split(':')
+        if len(atom_range) == 2:
+            atom_range[0] = int(atom_range[0])
+            atom_range[1] = int(atom_range[1]) + 1
+        elif len(atom_range) == 3:
+            atom_range[0] = int(atom_range[0])
+            atom_range[1] = int(atom_range[1])
+            atom_range[2] = int(atom_range[2]) + 1
         if int(atom_range[0]) < 0:
+            atom_range[0] += self._atom_num
             if len(atom_range) == 2:
-                atom_range[0], atom_range[1] = int(atom_range[0])+self._atom_num-self._start, int(atom_range[1])+self._atom_num-self._start+1
+                atom_range[1] += self._atom_num
             elif len(atom_range) == 3:
-                atom_range[0], atom_range[1], atom_range[2] = int(atom_range[0])+self._atom_num-self._start, int(atom_range[1]), int(atom_range[2])+self._atom_num-self._start+1
-            else:
-                print("Warning: Two or three numbers separated by ':'.")
+                atom_range[2] += self._atom_num
         else:
+            atom_range[0] -= self._start
             if len(atom_range) == 2:
-                atom_range[0], atom_range[1] = int(atom_range[0])-self._start, int(atom_range[1])-self._start+1
+                atom_range[1] -= self._start
             elif len(atom_range) == 3:
-                atom_range[0], atom_range[1], atom_range[2] = int(atom_range[0])-self._start, int(atom_range[1]), int(atom_range[2])-self._start+1
-            else:
-                print("Warning: Two or three numbers separated by ':'.")
-        self._atom_list.extend(list(range(atom_range[0], atom_range[1])) if len(atom_range) == 2 else list(range(atom_range[0], atom_range[2], atom_range[1])))
+                atom_range[2] -= self._start
+        atom_list = list(range(atom_range[0], atom_range[1])) if len(atom_range) == 2 else list(range(atom_range[0], atom_range[2], atom_range[1]))
+        self._atom_list.extend(atom_list)
     def _atom_kind(self, inp):
         atoms = [idx for idx, element in enumerate(self._elements) if element in inp.split('_')]
         if len(atoms) > 0:
@@ -736,12 +765,14 @@ class Atom(Fundamental):
         if atom not in self._atom_list:
             self._atom_list.append(atom)
     def read_atoms_info(self, filepath=None):
-        if filepath is None and hasattr(self._args, 'molecules') and path.isfile(self._args.molecules):
-            filepath = self._args.molecules
-        elif filepath is None and hasattr(self._args, 'molecules') and not path.isfile(self._args.molecules):
-            raise FileNotFoundError("'molecules' file not found.")
-        elif filepath is None and not hasattr(self._args, 'molecules'):
-            raise ValueError("'molecules' argument is not defined.")
+        if filepath is None:
+            if not hasattr(self._args, 'molecules'):
+                raise FileNotFoundError("'molecules' file not found.")
+            else:
+                if path.isfile(self._args.molecules):
+                    filepath = self._args.molecules
+                else:
+                    raise FileNotFoundError("'molecules' file not found.")
         with open(filepath) as read_file:
             tmp = []
             molecule = 0
@@ -757,10 +788,11 @@ class Atom(Fundamental):
     def read_elements(self, software, filepath=None):
         self._elements = software.read_elements() if software.elements == [] else software.elements
         if filepath is not None or (hasattr(self._args, 'elementfile') and self._args.elementfile is not None):
-            if filepath is None and path.isfile(self._args.elementfile):
-                filepath = self._args.elementfile
-            elif filepath is None and not path.isfile(self._args.elementfile):
-                raise FileNotFoundError("'elementfile' file not found.")
+            if filepath is None:
+                if path.isfile(self._args.elementfile):
+                    filepath = self._args.elementfile
+                else:
+                    raise FileNotFoundError("'elementfile' file not found.")
             with open(filepath) as read_file:
                 self._elements = list(self._elements)
                 for idx, line in enumerate(read_file):
@@ -918,12 +950,14 @@ class Molecule(Fundamental):
         self._frac_flag = flag
     def read_bond(self, filepath=None):
         if self._bond_type == {}:
-            if filepath is None and hasattr(self._args, 'bond') and path.isfile(self._args.bond):
-                filepath = self._args.bond
-            elif filepath is None and hasattr(self._args, 'bond') and not path.isfile(self._args.bond):
-                raise FileNotFoundError("'bond' file not found.")
-            elif filepath is None and not hasattr(self._args, 'bond'):
-                raise ValueError("No 'bond' argument provided.")
+            if filepath is None:
+                if hasattr(self._args, 'bond'):
+                    if path.isfile(self._args.bond):
+                        filepath = self._args.bond
+                    else:
+                        raise FileNotFoundError("'bond' file not found.")
+                else:
+                    raise ValueError("No 'bond' argument provided.")
             self.build_threshold()
             with open(filepath) as read_file:
                 row = 0
@@ -944,16 +978,14 @@ class Molecule(Fundamental):
                         print(f"Warning: Input proper format in row {row}. Skip this row.")
     def read_molecules(self, filepath=None):
         if self._mole_dict == {}:
-            if filepath is None and hasattr(self._args, 'molecules') and self._args.molecules is not None and path.isfile(self._args.molecules):
-                filepath = self._args.molecules
-            elif filepath is None and hasattr(self._args, 'molecules') and self._args.molecules is not None and not path.isfile(self._args.molecules):
-                raise FileNotFoundError("'molecules' file not found.")
-            elif (filepath is None or not hasattr(self._args, 'molecules')) and self._args.molecules is None:
-                raise ValueError("No 'molecules' argument provided.")
-            elif filepath is not None and hasattr(self._args, 'molecules') and self._args.molecules is not None and not path.isfile(self._args.molecules):
-                raise FileNotFoundError("'molecules' file not found.")
-            elif self._args.molecules is None:
-                self._args.molecules = filepath
+            if not hasattr(self._args, 'molecules'):
+                if filepath is None:
+                    raise FileNotFoundError("'molecules' file not found.")
+            elif filepath is None and self._args.molecules is not None:
+                if path.isfile(self._args.molecules):
+                    filepath = self._args.molecules
+                else:
+                    raise FileNotFoundError("'molecules' file not found.")
             with open(filepath) as read_file:
                 mole_kind = []
                 former_mole_kind = ""
@@ -1043,9 +1075,8 @@ class AtomStep(ABC):
             self.bridge = input_obj
         else:
             self.args = input_obj
-        if hasattr(self._args, "molecules") and self._args.molecules is not None:
-            if path.isfile(self._args.molecules):
-                self._molecules.read_molecules(self._args.molecules)
+        if hasattr(self._args, "molecules") and self._args.molecules is not None and path.isfile(self._args.molecules):
+            self._molecules.read_molecules(self._args.molecules)
     @property
     def args(self):
         return getattr(self, "_args", None)
@@ -1456,8 +1487,7 @@ class Convert:
         return elements
 
 class Lattice:
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self):
         self.__first_flag, self.__NpT_flag = False, False
         self.__firstLattice = []
     @property
