@@ -2,8 +2,8 @@ from numpy import zeros, array
 from kit.fundamental import *
 
 class POSCAR(Single_Point):
-    def __init__(self, args=None, atoms=None, **kwargs):
-        super().__init__(input_obj=args, atoms=atoms, **kwargs)
+    def __init__(self, args=None, atoms=None):
+        Single_Point.__init__(self, args, atoms)
         if hasattr(self, "_args") and hasattr(self._args, "input") and (self._args.input == "POSCAR" or self._args.input == "CONTCAR"):
             self.read_elements()
         self._relax_flag = False
@@ -237,8 +237,10 @@ class POSCAR(Single_Point):
                 write_file.write('\n')
 
 class XDATCAR(Position, Periodic, Trajectory):
-    def __init__(self, args=None, steps=None, atoms=None, **kwargs):
-        super().__init__(input_obj=args, steps=steps, atoms=atoms, **kwargs)
+    def __init__(self, args=None, steps=None, atoms=None):
+        Position.__init__(self, args)
+        Periodic.__init__(self, args)
+        Trajectory.__init__(self, args, steps, atoms)
         if hasattr(self, "_args") and hasattr(self._args, "input") and "XDATCAR" in self._args.input:
             self.read_elements()
         if hasattr(args, "bridge"):
@@ -455,8 +457,8 @@ class XDATCAR(Position, Periodic, Trajectory):
                     write_file.write(f"    {frac_pos[i][j][0]}\t{frac_pos[i][j][1]}\t{frac_pos[i][j][2]}\n")
 
 class ACF(Fundamental, Charge):
-    def __init__(self, input_obj=None, atoms=None, **kwargs):
-        super().__init__(input_obj=input_obj, atoms=atoms, **kwargs)
+    def __init__(self, input_obj, atoms=None):
+        Fundamental.__init__(self, input_obj)
         Charge.__init__(self)
         if hasattr(input_obj, "bridge"):
             self.bridge = input_obj
@@ -497,8 +499,8 @@ class ACF(Fundamental, Charge):
             write_file.write(f"charges,{sum(self._diff):.4f}" + "".join([f",{charge:.4f}" for charge in self._diff]) + '\n\n')
 
 class ACFs(Trajectory, Charge):
-    def __init__(self, input_obj=None, steps=None, atoms=None, **kwargs):
-        super().__init__(input_obj=input_obj, steps=steps, atoms=atoms, **kwargs)
+    def __init__(self, input_obj, steps=None, atoms=None):
+        Trajectory.__init__(self, input_obj, steps=steps, atoms=atoms)
         Charge.__init__(self)
         if hasattr(input_obj, "bridge"):
             self.bridge = input_obj
@@ -557,8 +559,8 @@ class ACFs(Trajectory, Charge):
             write_file.write('\n')
 
 class Charge_Edit(Trajectory, Charge):
-    def __init__(self, input_obj=None, steps=None, atoms=None, **kwargs):
-        super().__init__(input_obj=input_obj, steps=steps, atoms=atoms, **kwargs)
+    def __init__(self, input_obj, steps=None, atoms=None):
+        Trajectory.__init__(self, input_obj, steps, atoms)
         Charge.__init__(self)
         self._ref = {}
     def bridge(self):
@@ -647,13 +649,12 @@ class Charge_Edit(Trajectory, Charge):
                 acf.elements = self._AtomStep.elements
                 acf.read_all()
                 steps.append(int(file))
-                charges[int(file)] = acf.charge
+                charges[int(file)-self._args.step+1] = acf.charge
             else:
                 print(f"Warning: {path.abspath(path.join(self._args.input, file))} does not have ACF.dat file. Skip it.")
         self._AtomStep.steps.total_steps = max(steps)
-        for step in steps:
+        for step in sorted(steps):
             self._AtomStep.steps.put(step)
-        self._AtomStep.steps.sort()
         for step in self._AtomStep.steps.get():
             self._charge.append(charges[step])
         self.charge_diff()
