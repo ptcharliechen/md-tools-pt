@@ -21,12 +21,11 @@ class Step_Charge(Step):
 
 def choose_mode(args):
     while(1):
-        modeFlag = False
-        if not modeFlag:
-            mode = input("Single point or trajectory mode (s/t): ")
-        args.args.input = path.abspath(args.args.input)
+        mode_flag = False
+        mode = input("Single point or trajectory mode (s/t): ")
+        args.args.input = path.abspath(args.args.input) if args.args.input is not None else getcwd()
         if mode.lower() == 's':
-            modeFlag = True
+            mode_flag = True
             args.input_type = "ACF.dat"
             args.input_check()
             if path.isfile(args.args.input):
@@ -34,14 +33,22 @@ def choose_mode(args):
             elif path.isdir(args.args.input):
                 return args
         elif mode.lower() == 't':
-            modeFlag = True
+            mode_flag = True
             flag = False
-            args.args.input = input("Input directory path with ACF.dat files: ")
+            dirpath = input("Input directory path with ACF.dat files: ")
+            if not path.isdir(dirpath):
+                print(f"Warning: {dirpath} is not a directory.")
+                continue
+            else:
+                args.args.input = dirpath
             for filename in listdir(args.args.input):
-                if not filename.isdigit() and path.isfile(path.join(args.args.input, filename, "ACF.dat")):
-                    flag = True
-                elif not filename.isdigit() and not path.isfile(path.join(args.args.input, filename, "ACF.dat")):
-                    input(f"Warning: {path.join(args.args.input, filename)} does not have any ACF.dat file. Press Enter button to continue after checking.")
+                if path.isfile(path.join(args.args.input, filename)):
+                    continue
+                elif filename.isdigit():
+                    if path.isfile(path.join(args.args.input, filename, "ACF.dat")):
+                        flag = True
+                    else:
+                        input(f"Warning: {path.join(args.args.input, filename)} does not have any ACF.dat file. Press Enter button to continue after checking.")
             if flag:
                 return args
         else:
@@ -73,21 +80,35 @@ if __name__ == "__main__":
         try:
             charge_edit.read_elements()
         except:
-            arg.args.poscar = input("Input POSCAR file: ")
-            charge_edit.args = arg.args
+            filepath = input("Input POSCAR file: ")
+            if path.isfile(path.join(filepath, "POSCAR")):
+                filepath = path.join(filepath, "POSCAR")
+            if not path.isfile(filepath):
+                print(f"Warning: {filepath} does not exist.")
+            else:
+                arg.args.poscar = filepath
+                charge_edit.args = arg.args
+                charge_edit.read_elements()
+                break
         else:
             break
-        charge_edit.read_elements()
     
     while(1):
         try:
             charge_edit.read_ref()
         except:
-            arg.args.potcar = input("Input POTCAR file: ")
-            charge_edit.args = arg.args
+            filepath = input("Input POTCAR file: ")
+            if path.isfile(path.join(filepath, "POTCAR")):
+                filepath = path.join(filepath, "POTCAR")
+            if not path.isfile(filepath):
+                print(f"Warning: {filepath} does not exist.")
+            else:
+                arg.args.potcar = filepath
+                charge_edit.args = arg.args
+                charge_edit.read_ref()
+                break
         else:
             break
-        charge_edit.read_elements()
     
     if path.isfile(arg.args.input):
         atom_lists = lines(charge_edit)
