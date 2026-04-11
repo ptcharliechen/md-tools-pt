@@ -615,13 +615,13 @@ class Atom(Fundamental):
             self._atoms(input_atom_list.split('_'))
         elif isinstance(input_atom_list, str) and all([element in self._elements for element in input_atom_list.split("_")]):
             self._atom_kind(input_atom_list)
-        elif ':' in input_atom_list:
+        elif ':' in str(input_atom_list):
             if fullmatch(r"\-?\d+:\-?\d+(:\-?\d+)?", str(input_atom_list)) is None:
                 return -6
-            sp = [int(atom) - self._start for atom in input_atom_list.split(':')]
+            sp = [(lambda a: a - self._start if a > 0 else a)(int(atom)) for atom in input_atom_list.split(':')]
             if (len(sp) == 3 and int(sp[0]) > int(sp[2])) or (len(sp) == 2 and int(sp[0]) > int(sp[1])):
                 return -2
-            if min(sp) < 0 and min(sp) + self._atom_num < 0:
+            if min(sp) < 0 and min(sp) + self._start + self._atom_num < 0:
                 return -4
             elif max(sp) > self._atom_num:
                 return -3
