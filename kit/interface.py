@@ -1,5 +1,5 @@
 from os import path
-from re import fullmatch, split
+from re import compile, split
 from collections.abc import Iterable
 from copy import deepcopy
 from kit.fundamental import Step, Atom
@@ -336,7 +336,7 @@ def single(software: object, atom_number: int=1, line: list=[], show_info_flag: 
     print("\nAtom input:")
     if atom_list_from_file is None and show_info_flag:
         print(f"\nStart atom number: {software.args.atom}")
-        print("Input a number.")
+        print("Input a number.\n")
     
     # Prompt the user to input atom numbers until a valid input is given
     output = []
@@ -366,7 +366,7 @@ def single(software: object, atom_number: int=1, line: list=[], show_info_flag: 
         # Loop over the individual atoms in the input
         for a in tmp.split()[:atom_number]:
             # Check if the input is an integer
-            if fullmatch(r"\-?\d+", a) is None:
+            if compile(r"^\-?\d+$").match(a) is None:
                 print("Warning: Input integer(s).")
                 break
             else:
@@ -374,6 +374,7 @@ def single(software: object, atom_number: int=1, line: list=[], show_info_flag: 
                 # Check if there is any error
                 if atoms.err_list[err_return]:
                     print(atoms.err_list[err_return])
+                    break
         else:
             output.append(atoms)
             if annotate:
@@ -487,7 +488,7 @@ def couple(software: object, block_number: int=2, line: list=[], items: int=-1, 
         # Loop over the individual atoms in the input
         for a in inp.split()[:block_number]:
             # Check if the input is an integer
-            if fullmatch(r"\-?\d+", a) is None:
+            if compile(r"^\-?\d+$").match(a) is None:
                 print(f"Warning: Input {block_number} integers.")
                 break
             if Atom_split_flag:
@@ -498,6 +499,7 @@ def couple(software: object, block_number: int=2, line: list=[], items: int=-1, 
                 # Check whether there is any error
                 if atoms.err_list[err_return]:
                     print(atoms.err_list[err_return])
+                    break
                 else:
                     tmp.append(atoms)
         else:
@@ -514,6 +516,8 @@ def couple(software: object, block_number: int=2, line: list=[], items: int=-1, 
                 else:
                     i += 1
                     atom_list.append(atoms)
+        if err_return < 0:
+            continue
         
         if annotate:
             annotate_info.append(inp.split()[block_number:block_number+annotate])
@@ -991,7 +995,7 @@ def wrap(software, type="d"):
 def angle_manual(wrap):
     while(1):
         side_wrap = input("Modified side atom(s) (Over one atom allowed) (1/2): ")
-        if fullmatch(r"(1|2|1.2)", side_wrap):
+        if compile(r"^(1|2|1.2)$").match(side_wrap):
             print("Warning: Input error.")
             continue
         if "1" in split(r"[^a-zA-Z0-9]", side_wrap):
@@ -1020,7 +1024,7 @@ def manual_direction(No, software, kind):
             directions = input("Modified direction(s) (Over one direction allowed): ")
         else:
             directions = input(f"Modified direction(s) for m{No} (Over one direction allowed): ")
-        if fullmatch(r"[ABCabc]([^a-zA-Z0-9][ABCabc]){0,2}", directions):
+        if compile(r"^[ABCabc]([^a-zA-Z0-9][ABCabc]){0,2}$").match(directions):
             break
         else:
             print("Warning: Input 'a', 'b', or 'c'.")
@@ -1090,7 +1094,7 @@ def read_bond(software):
                 elif len(sp[0].split('-')) != 2:
                     print("Warning: The format of bond type is two elements separated by '-', like 'C-C', 'C-O'.")
                     continue
-                elif fullmatch(r"\d+\.?\d*", sp[1]) is None:
+                elif compile(r"^\d+\.?\d*$").match(sp[1]) is None:
                     print("Warning: The format of the threshold is a positive number.")
                     continue
                 i += 1
