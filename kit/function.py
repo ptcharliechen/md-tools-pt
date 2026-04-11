@@ -93,7 +93,7 @@ class Wrap_Base(Periodic):
             self._cen_atom_step = (AtomStep_Single_Point() if isinstance(self._AtomStep, AtomStep_Single_Point) else AtomStep_Trj())
             self._mea_atom_step = (AtomStep_Single_Point() if isinstance(self._AtomStep, AtomStep_Single_Point) else AtomStep_Trj())
             self._mea_atom_step.atoms.elements = self._cen_atom_step.atoms.elements = software.atom_step.atoms.elements
-            atom_list = software.atom_step.atom_list
+            atom_list = software.atom_step.atoms.get()
             cen_atom, mea_atom = Atom(software), Atom(software)
             cen_atom.put(atom_list[0]); mea_atom.put(atom_list[1:])
             self._cen_atom_step.atoms = cen_atom
